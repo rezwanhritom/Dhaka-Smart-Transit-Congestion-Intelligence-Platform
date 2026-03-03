@@ -1,6 +1,6 @@
-# NDGSAMS Documentation & Guidelines
+# Dhaka Smart Transit & Congestion Intelligence Platform – Documentation
 
-This folder contains project documentation and guidelines for the National Digital Government Service and Accountability Management System.
+This folder contains development guidelines and project documentation.
 
 ## Contents
 
