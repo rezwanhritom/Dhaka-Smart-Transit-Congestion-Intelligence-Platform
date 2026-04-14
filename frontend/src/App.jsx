@@ -1,7 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
-import Home from './pages/Home';
+import Home from "./pages/Home";
 import Incident from './pages/Incident';
 import Planner from './pages/Planner';
 
