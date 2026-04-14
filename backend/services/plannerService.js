@@ -6,7 +6,7 @@ import { getCrowding, getETA } from './aiService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-/** Repo-relative path to transit routes (no hardcoded route definitions). */
+/** Repo-relative path to transit routes (single source of truth). */
 const ROUTES_DATA_PATH = path.join(
   __dirname,
   '..',
@@ -41,6 +41,23 @@ export function clearRoutesCache() {
 }
 
 /**
+ * Collect unique stop names from all routes, sorted for stable UI.
+ * @returns {Promise<string[]>}
+ */
+export async function getAllStops() {
+  const routes = await loadRoutesDataset();
+  const set = new Set();
+  for (const route of routes) {
+    const stops = route?.stops;
+    if (!Array.isArray(stops)) continue;
+    for (const s of stops) {
+      if (typeof s === 'string' && s.trim()) set.add(s.trim());
+    }
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
+}
+
+/**
  * @param {number} hour 0–23
  * @returns {'HIGH'|'MEDIUM'|'LOW'}
  */
@@ -62,11 +79,13 @@ function worseCrowd(a, b) {
 }
 
 /**
+ * Routes where origin appears before destination on the same line.
+ * @param {Array<{ name: string, stops: string[] }>} routes
  * @param {string} origin
  * @param {string} destination
- * @param {Array<{ name: string, stops: string[] }>} routes
+ * @returns {Array<{ routeName: string, stops: string[] }>}
  */
-export function findCommuteOptions(routes, origin, destination) {
+function collectValidRouteSegments(routes, origin, destination) {
   const options = [];
   for (const route of routes) {
     const stops = route.stops;
@@ -80,6 +99,17 @@ export function findCommuteOptions(routes, origin, destination) {
     });
   }
   return options;
+}
+
+/**
+ * All valid routes (from `routes.json`) with sliced stops between origin and destination.
+ * @param {string} origin
+ * @param {string} destination
+ * @returns {Promise<Array<{ routeName: string, stops: string[] }>>}
+ */
+export async function findValidRoutes(origin, destination) {
+  const routes = await loadRoutesDataset();
+  return collectValidRouteSegments(routes, origin, destination);
 }
 
 /**
@@ -140,7 +170,7 @@ async function scoreOption(option) {
  */
 export async function planCommute({ origin, destination, hour }) {
   const routes = await loadRoutesDataset();
-  const options = findCommuteOptions(routes, origin, destination);
+  const options = collectValidRouteSegments(routes, origin, destination);
   const trafficLevel = trafficLevelForHour(hour);
 
   const results = await Promise.all(
@@ -154,5 +184,5 @@ export async function planCommute({ origin, destination, hour }) {
     ),
   );
 
-  return results;
+  return results.sort((a, b) => a.eta - b.eta);
 }

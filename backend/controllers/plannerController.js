@@ -3,7 +3,7 @@
  */
 
 import axios from 'axios';
-import { planCommute } from '../services/plannerService.js';
+import { getAllStops, planCommute } from '../services/plannerService.js';
 
 function parseHour(value) {
   if (value === undefined || value === null || value === '') {
@@ -15,6 +15,20 @@ function parseHour(value) {
   }
   return { ok: true, hour: n };
 }
+
+export const getStops = async (req, res, next) => {
+  try {
+    const data = await getAllStops();
+    return res.json({ data });
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return res.status(500).json({
+        message: 'Transit routes dataset could not be read',
+      });
+    }
+    next(error);
+  }
+};
 
 export const postCommute = async (req, res, next) => {
   try {

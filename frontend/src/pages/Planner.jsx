@@ -1,47 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import api from '../services/api';
-
-/** Stop names aligned with `ai-services/data/stops.json` */
-const STOPS = [
-  'Mirpur 10',
-  'Mirpur 2',
-  'Shewrapara',
-  'Kazipara',
-  'Agargaon',
-  'Shyamoli',
-  'Mohammadpur',
-  'Dhanmondi 27',
-  'Dhanmondi 32',
-  'Kalabagan',
-  'Science Lab',
-  'Shahbag',
-  'Paltan',
-  'Motijheel',
-  'Farmgate',
-  'Karwan Bazar',
-  'Tejgaon',
-  'Mohakhali',
-  'Banani',
-  'Kakoli',
-  'Airport',
-  'Uttara Sector 10',
-  'Uttara Sector 12',
-  'Uttara House Building',
-  'Kuril',
-  'Bashundhara',
-  'Gulshan 1',
-  'Gulshan 2',
-  'Badda',
-  'Uttor Badda',
-  'Notun Bazar',
-  'Rampura',
-  'Malibagh',
-  'Mouchak',
-  'Khilgaon',
-  'Banasree',
-  'Demra',
-];
 
 const inputClass =
   'w-full p-3 rounded-lg bg-white/5 border border-white/10 text-white outline-none transition focus:border-cyan-400/40 focus:ring-2 focus:ring-cyan-400/20';
@@ -76,6 +35,9 @@ const routeItemVariants = {
 };
 
 function Planner() {
+  const [stops, setStops] = useState([]);
+  const [stopsLoading, setStopsLoading] = useState(true);
+  const [stopsError, setStopsError] = useState('');
   const [origin, setOrigin] = useState('');
   const [destination, setDestination] = useState('');
   const [hour, setHour] = useState('');
@@ -83,6 +45,29 @@ function Planner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [hasFetched, setHasFetched] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setStopsError('');
+      try {
+        const { data } = await api.get('/planner/stops');
+        const list = Array.isArray(data?.data) ? data.data : [];
+        if (!cancelled) setStops(list);
+      } catch (err) {
+        const msg =
+          err.response?.data?.message ||
+          err.message ||
+          'Could not load stops.';
+        if (!cancelled) setStopsError(typeof msg === 'string' ? msg : String(msg));
+      } finally {
+        if (!cancelled) setStopsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const sortedRoutes = useMemo(() => {
     if (!Array.isArray(results) || results.length === 0) return [];
@@ -156,11 +141,13 @@ function Planner() {
                 <select
                   value={origin}
                   onChange={(e) => setOrigin(e.target.value)}
-                  disabled={loading}
+                  disabled={loading || stopsLoading || stops.length === 0}
                   className={inputClass}
                 >
-                  <option value="">Select origin</option>
-                  {STOPS.map((name) => (
+                  <option value="">
+                    {stopsLoading ? 'Loading stops…' : 'Select origin'}
+                  </option>
+                  {stops.map((name) => (
                     <option key={name} value={name} className="bg-slate-900">
                       {name}
                     </option>
@@ -175,11 +162,13 @@ function Planner() {
                 <select
                   value={destination}
                   onChange={(e) => setDestination(e.target.value)}
-                  disabled={loading}
+                  disabled={loading || stopsLoading || stops.length === 0}
                   className={inputClass}
                 >
-                  <option value="">Select destination</option>
-                  {STOPS.map((name) => (
+                  <option value="">
+                    {stopsLoading ? 'Loading stops…' : 'Select destination'}
+                  </option>
+                  {stops.map((name) => (
                     <option key={name} value={name} className="bg-slate-900">
                       {name}
                     </option>
@@ -207,11 +196,31 @@ function Planner() {
             <button
               type="button"
               onClick={handlePlanRoute}
-              disabled={loading}
+              disabled={
+                loading ||
+                stopsLoading ||
+                stops.length === 0 ||
+                Boolean(stopsError)
+              }
               className="mt-6 w-full rounded-lg bg-primary py-3 font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loading ? 'Planning…' : 'Plan Route'}
             </button>
+
+            <AnimatePresence>
+              {stopsError ? (
+                <motion.p
+                  key="stops-err"
+                  role="alert"
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  className="mt-4 rounded-lg border border-amber-500/30 bg-amber-950/40 px-4 py-3 text-sm text-amber-100"
+                >
+                  Stops: {stopsError}
+                </motion.p>
+              ) : null}
+            </AnimatePresence>
 
             <AnimatePresence>
               {error ? (
