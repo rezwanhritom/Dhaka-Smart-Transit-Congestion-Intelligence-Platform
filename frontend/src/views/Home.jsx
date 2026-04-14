@@ -1,3 +1,5 @@
+/* LEGACY FILE - NOT USED. App imports pages/Home.jsx */
+
 import { useEffect, useState } from 'react';
 import api from '../services/api';
 import './Home.css';
