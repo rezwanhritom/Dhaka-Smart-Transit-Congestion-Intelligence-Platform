@@ -16,7 +16,6 @@ def classify_incident(payload: dict):
 def estimate_impact(payload: dict):
     _ = payload
     return {
-        "affected_routes": ["Route A"],
         "delay": 20,
         "recovery_time": 60,
     }

@@ -22,11 +22,16 @@ function Incident() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [impactLoading, setImpactLoading] = useState(false);
+  const [impactError, setImpactError] = useState(null);
+  const [impactResult, setImpactResult] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
     setResult(null);
+    setImpactError(null);
+    setImpactResult(null);
     setLoading(true);
     try {
       const { data } = await api.post('/incidents/classify', {
@@ -42,6 +47,31 @@ function Incident() {
       setError(msg);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleEstimateImpact = async () => {
+    if (!result?.category || !result?.severity || !result?.location) {
+      return;
+    }
+    setImpactError(null);
+    setImpactResult(null);
+    setImpactLoading(true);
+    try {
+      const { data } = await api.post('/incidents/impact', {
+        category: result.category,
+        severity: result.severity,
+        location: result.location,
+      });
+      setImpactResult(data);
+    } catch (err) {
+      const msg =
+        err.response?.data?.message ??
+        err.message ??
+        'Could not estimate impact. Try again.';
+      setImpactError(msg);
+    } finally {
+      setImpactLoading(false);
     }
   };
 
@@ -130,6 +160,58 @@ function Incident() {
                 <dd className="font-medium text-slate-100">{result.assigned_to}</dd>
               </div>
             </dl>
+            <button
+              type="button"
+              onClick={handleEstimateImpact}
+              disabled={loading || impactLoading}
+              className="mt-6 rounded-xl bg-primary px-6 py-3 font-semibold text-white shadow-lg transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {impactLoading ? 'Estimating…' : 'Estimate Impact'}
+            </button>
+            {impactError && (
+              <p className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                {impactError}
+              </p>
+            )}
+            {impactResult && (
+              <div className="mt-6 rounded-xl border border-white/10 bg-black/30 p-5">
+                <h3 className="text-base font-semibold text-white">Impact estimate</h3>
+                <dl className="mt-4 space-y-3 text-sm">
+                  <div>
+                    <dt className="text-slate-400">Affected routes</dt>
+                    <dd className="mt-1 font-medium text-slate-100">
+                      {impactResult.affected_routes?.length
+                        ? impactResult.affected_routes.join(', ')
+                        : 'None (no route stop matched this location)'}
+                    </dd>
+                  </div>
+                  <div className="flex flex-wrap gap-6">
+                    <div>
+                      <dt className="text-slate-400">Estimated delay</dt>
+                      <dd className="mt-1 font-medium text-slate-100">
+                        {impactResult.delay != null ? `${impactResult.delay} min` : '—'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-slate-400">Recovery time</dt>
+                      <dd className="mt-1 font-medium text-slate-100">
+                        {impactResult.recovery_time != null
+                          ? `${impactResult.recovery_time} min`
+                          : '—'}
+                      </dd>
+                    </div>
+                  </div>
+                  <div>
+                    <dt className="text-slate-400">Suggested reroutes</dt>
+                    <dd className="mt-1 font-medium text-slate-100">
+                      {impactResult.reroutes?.length
+                        ? impactResult.reroutes.join(', ')
+                        : '—'}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+            )}
           </div>
         )}
       </motion.section>
