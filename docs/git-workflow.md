@@ -25,4 +25,4 @@ Guidelines for branching, commits, and collaboration.
 ## What to commit
 
 - Do commit: source code, config templates (no secrets), docs, and script changes.
-- Do not commit: `node_modules/`, `.env` (use `.env.example` or docs for required vars), build artifacts, IDE-only config if it’s personal preference. Keep `.gitignore` up to date.
+- Do not commit: `node_modules/`, `.env` (document required vars in `docs/run-full-stack.md` or README), build artifacts, IDE-only config if it’s personal preference. Keep `.gitignore` up to date.
