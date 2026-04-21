@@ -3,7 +3,10 @@ import {
   getSimulationBus,
   getSimulationFleet,
   getSimulationHistory,
+  getSimulationSession,
   getStops,
+  postSimulationSession,
+  postSimulationSessionOnboard,
   postCommute,
 } from '../controllers/plannerController.js';
 
@@ -14,5 +17,8 @@ router.get('/stops', getStops);
 router.get('/sim/fleet', getSimulationFleet);
 router.get('/sim/buses/:bus_id', getSimulationBus);
 router.get('/sim/history', getSimulationHistory);
+router.post('/sim/session', postSimulationSession);
+router.get('/sim/session/:session_id', getSimulationSession);
+router.post('/sim/session/:session_id/onboard', postSimulationSessionOnboard);
 
 export default router;

@@ -123,6 +123,12 @@ Planner simulation APIs (Phase 4):
 - `GET /api/planner/sim/buses/:bus_id` — one bus state
 - `GET /api/planner/sim/history?limit=200` — recent completed loop history (JSONL-backed)
 
+Planner tracking APIs (Phase 5):
+
+- `POST /api/planner/sim/session` with `{ origin, destination, route_name, boarding_stop? }` — bind best matching active simulated bus
+- `GET /api/planner/sim/session/:session_id` — live tracker status (`eta_to_user_min`, bus position, optional `eta_to_destination_min`)
+- `POST /api/planner/sim/session/:session_id/onboard` — mark rider onboard; tracker switches to destination ETA
+
 ---
 
 ## 6. If something fails

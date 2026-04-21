@@ -54,6 +54,9 @@ function Planner() {
   const [timeType, setTimeType] = useState('leave_after');
   const [preference, setPreference] = useState('fastest');
   const [results, setResults] = useState([]);
+  const [simSession, setSimSession] = useState(null);
+  const [simLoading, setSimLoading] = useState(false);
+  const [simError, setSimError] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [hasFetched, setHasFetched] = useState(false);
@@ -121,6 +124,8 @@ function Planner() {
   const handlePlanRoute = async () => {
     setError('');
     setResults([]);
+    setSimSession(null);
+    setSimError('');
 
     if (!origin?.trim() || !destination?.trim()) {
       setError('Please select both origin and destination.');
@@ -159,6 +164,64 @@ function Planner() {
       setLoading(false);
     }
   };
+
+  const handleTrackBestRoute = async () => {
+    if (!sortedRoutes.length) return;
+    const best = sortedRoutes[0];
+    const rideLeg = Array.isArray(best?.legs) ? best.legs.find((l) => l.kind === 'ride') : null;
+    if (!rideLeg) {
+      setSimError('No ride leg found to attach simulation tracking.');
+      return;
+    }
+    setSimError('');
+    setSimLoading(true);
+    try {
+      const { data } = await api.post('/planner/sim/session', {
+        origin: best?.stops?.[0] ?? rideLeg.from_stop,
+        destination: best?.stops?.[best.stops.length - 1] ?? rideLeg.to_stop,
+        boarding_stop: rideLeg.from_stop,
+        route_name: rideLeg.route,
+      });
+      const session = data?.data;
+      if (session?.session_id) {
+        const status = await api.get(`/planner/sim/session/${session.session_id}`);
+        setSimSession(status.data?.data ?? null);
+      }
+    } catch (err) {
+      const msg = err.response?.data?.message || err.message || 'Could not start tracking session.';
+      setSimError(String(msg));
+    } finally {
+      setSimLoading(false);
+    }
+  };
+
+  const handleConfirmOnboard = async () => {
+    if (!simSession?.session_id) return;
+    setSimLoading(true);
+    setSimError('');
+    try {
+      const { data } = await api.post(`/planner/sim/session/${simSession.session_id}/onboard`);
+      setSimSession(data?.data ?? simSession);
+    } catch (err) {
+      const msg = err.response?.data?.message || err.message || 'Could not confirm onboard.';
+      setSimError(String(msg));
+    } finally {
+      setSimLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!simSession?.session_id) return undefined;
+    const id = setInterval(async () => {
+      try {
+        const { data } = await api.get(`/planner/sim/session/${simSession.session_id}`);
+        setSimSession(data?.data ?? null);
+      } catch {
+        // Ignore polling blips; keep latest known state.
+      }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [simSession?.session_id]);
 
   return (
     <div className="w-full max-w-full overflow-x-hidden px-6 py-24 md:px-12 md:py-32">
@@ -368,19 +431,64 @@ function Planner() {
           ) : null}
 
           {!loading && sortedRoutes.length > 0 ? (
-            <motion.ul
-              className="space-y-6"
-              initial="hidden"
-              animate="show"
-              variants={{
-                hidden: { opacity: 0 },
-                show: {
-                  opacity: 1,
-                  transition: { staggerChildren: 0.08, delayChildren: 0.05 },
-                },
-              }}
-            >
-              {sortedRoutes.map((row, index) => {
+            <>
+              <div className="rounded-2xl border border-cyan-500/20 bg-cyan-950/20 p-4 text-sm text-cyan-100">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p>Simulation tracking for the best option (ETA to you, then ETA to destination).</p>
+                  <button
+                    type="button"
+                    onClick={handleTrackBestRoute}
+                    disabled={simLoading}
+                    className="rounded-lg bg-cyan-500 px-3 py-2 text-xs font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-60"
+                  >
+                    {simLoading ? 'Starting…' : 'Track Best Bus'}
+                  </button>
+                </div>
+                {simError ? <p className="mt-2 text-rose-200">{simError}</p> : null}
+                {simSession ? (
+                  <div className="mt-3 grid grid-cols-1 gap-2 text-xs md:grid-cols-2">
+                    <p>
+                      Bus: <span className="font-semibold">{simSession.bus_id}</span> ({simSession.route_name})
+                    </p>
+                    <p>
+                      Status: <span className="font-semibold">{simSession.bus_status}</span>
+                    </p>
+                    <p>
+                      ETA to you: <span className="font-semibold">{simSession.eta_to_user_min ?? '—'} min</span>
+                    </p>
+                    <p>
+                      ETA destination: <span className="font-semibold">{simSession.eta_to_destination_min ?? '—'} min</span>
+                    </p>
+                    <p>
+                      Onboard confirmed: <span className="font-semibold">{simSession.onboard_confirmed ? 'Yes' : 'No'}</span>
+                    </p>
+                    <div>
+                      <button
+                        type="button"
+                        onClick={handleConfirmOnboard}
+                        disabled={simLoading || simSession.onboard_confirmed}
+                        className="rounded bg-indigo-500/80 px-2 py-1 text-xs font-semibold text-white transition hover:bg-indigo-400 disabled:opacity-60"
+                      >
+                        {simSession.onboard_confirmed ? 'Onboard Confirmed' : "I'm on the bus"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <motion.ul
+                className="space-y-6"
+                initial="hidden"
+                animate="show"
+                variants={{
+                  hidden: { opacity: 0 },
+                  show: {
+                    opacity: 1,
+                    transition: { staggerChildren: 0.08, delayChildren: 0.05 },
+                  },
+                }}
+              >
+                {sortedRoutes.map((row, index) => {
                 const stopsText = Array.isArray(row?.stops)
                   ? row.stops.join(' → ')
                   : '';
@@ -458,8 +566,9 @@ function Planner() {
                     </div>
                   </motion.li>
                 );
-              })}
-            </motion.ul>
+                })}
+              </motion.ul>
+            </>
           ) : null}
         </div>
       </div>

@@ -164,3 +164,46 @@ export const getSimulationHistory = async (req, res, next) => {
     next(error);
   }
 };
+
+export const postSimulationSession = async (req, res, next) => {
+  try {
+    const { origin, destination, route_name: routeName, boarding_stop: boardingStop } = req.body ?? {};
+    if (!origin || !destination || !routeName) {
+      return res.status(400).json({ message: 'origin, destination, and route_name are required' });
+    }
+    const data = await fleetSimulationService.createTrackingSession({
+      origin: String(origin).trim(),
+      destination: String(destination).trim(),
+      route_name: String(routeName).trim(),
+      boarding_stop: boardingStop ? String(boardingStop).trim() : undefined,
+    });
+    if (!data) {
+      return res.status(404).json({ message: 'No active simulated bus found for this route segment' });
+    }
+    return res.json({ data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getSimulationSession = async (req, res, next) => {
+  try {
+    const { session_id: sessionId } = req.params;
+    const data = await fleetSimulationService.getTrackingSession(sessionId);
+    if (!data) return res.status(404).json({ message: 'Session not found' });
+    return res.json({ data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const postSimulationSessionOnboard = async (req, res, next) => {
+  try {
+    const { session_id: sessionId } = req.params;
+    const data = await fleetSimulationService.confirmOnboard(sessionId);
+    if (!data) return res.status(404).json({ message: 'Session not found' });
+    return res.json({ data });
+  } catch (error) {
+    next(error);
+  }
+};

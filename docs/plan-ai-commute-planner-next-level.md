@@ -134,11 +134,11 @@ This phase implements the **full cycle / loop system**: many buses per route typ
 
 ### Phase 5 — Planner UX: “ETA to you” / “onboard” / “ETA to destination” (uses Phase 4)
 
-- [ ] **5.1** Bind a **user’s planned boarding** to a **specific simulated bus** (e.g. nearest arriving by schedule + polyline ETA) or “next available in headway.”  
-- [ ] **5.2** Show **ETA until bus reaches origin** (poll or SSE/WebSocket) using that bus’s **live** simulated position along geometry.  
-- [ ] **5.3** **“I’m on the bus”** → switch to **remaining ETA to destination** (same bus instance; remaining polyline or segment ETAs).  
-- [ ] **5.4** Keep UI **focused**: times, next landmark, loop/line info optional — **not** the full city “live discovery” map.  
-- [ ] **5.5** Document public APIs (`POST` session bind, `GET` position/eta, etc.).
+- [x] **5.1** Bind a **user’s planned boarding** to a **specific simulated bus** (e.g. nearest arriving by schedule + polyline ETA) or “next available in headway.” *(Implemented: `POST /api/planner/sim/session` picks nearest active bus on selected first ride leg.)*  
+- [x] **5.2** Show **ETA until bus reaches origin** (poll or SSE/WebSocket) using that bus’s **live** simulated position along geometry. *(Implemented in planner UI with 3s polling from `GET /api/planner/sim/session/:session_id`.)*  
+- [x] **5.3** **“I’m on the bus”** → switch to **remaining ETA to destination** (same bus instance; remaining polyline or segment ETAs). *(Implemented: `POST /api/planner/sim/session/:session_id/onboard` + ETA-to-destination field.)*  
+- [x] **5.4** Keep UI **focused**: times, next landmark, loop/line info optional — **not** the full city “live discovery” map. *(Implemented as compact tracker card on planner page.)*  
+- [x] **5.5** Document public APIs (`POST` session bind, `GET` position/eta, etc.). *(Endpoints documented below and in runbook update.)*
 
 **Exit criteria:** End-to-end demo: pick trip → see approaching bus ETA → confirm onboard → see trip completion ETA; all backed by **Phase 4** fleet state.
 

@@ -59,6 +59,7 @@ class FleetSimulationService {
     this.dayKey = '';
     this.bootRealTs = Date.now();
     this.bootSimTs = Date.now();
+    this.sessions = new Map();
   }
 
   async init() {
@@ -142,6 +143,36 @@ class FleetSimulationService {
       from_stop: aName,
       to_stop: bName,
     };
+  }
+
+  _indexOfStop(bus, stopName) {
+    return bus.stops.findIndex((s) => s === stopName);
+  }
+
+  _etaToStopMinutes(bus, targetStop) {
+    const idxTarget = this._indexOfStop(bus, targetStop);
+    if (idxTarget === -1) return null;
+    const segmentDur = bus.loop_duration_min / (bus.stops.length - 1);
+    const currentEdgeIdx = Math.max(0, bus.stops.indexOf(bus.from_stop));
+    const edgeProgress = Math.max(0, Math.min(1, Number(bus.progress || 0) * (bus.stops.length - 1) - currentEdgeIdx));
+    let remainingEdges = 0;
+    if (idxTarget > currentEdgeIdx) {
+      remainingEdges = (idxTarget - currentEdgeIdx) - edgeProgress;
+    } else if (idxTarget === currentEdgeIdx) {
+      remainingEdges = Math.max(0, 1 - edgeProgress);
+    } else {
+      // target already behind on this loop, estimate next loop arrival
+      remainingEdges = (bus.stops.length - 1 - currentEdgeIdx) - edgeProgress + idxTarget;
+    }
+    return Math.max(0, Math.round(remainingEdges * segmentDur));
+  }
+
+  _etaBetweenStopsOnRoute(bus, fromStop, toStop) {
+    const i = this._indexOfStop(bus, fromStop);
+    const j = this._indexOfStop(bus, toStop);
+    if (i === -1 || j === -1 || j < i) return null;
+    const segmentDur = bus.loop_duration_min / (bus.stops.length - 1);
+    return Math.round((j - i) * segmentDur);
   }
 
   async appendLoopHistory(rows) {
@@ -272,6 +303,67 @@ class FleetSimulationService {
     } catch {
       return [];
     }
+  }
+
+  async createTrackingSession({ origin, destination, route_name: routeName, boarding_stop: boardingStop }) {
+    await this.advance(Date.now());
+    const candidates = this.buses.filter(
+      (b) =>
+        b.status === 'in_service' &&
+        b.route_name === routeName &&
+        b.stops.includes(origin) &&
+        b.stops.includes(destination) &&
+        b.stops.indexOf(origin) < b.stops.indexOf(destination),
+    );
+    if (!candidates.length) return null;
+    const targetBoarding = boardingStop || origin;
+    const ranked = candidates
+      .map((b) => ({ bus: b, eta_to_user_min: this._etaToStopMinutes(b, targetBoarding) }))
+      .filter((x) => Number.isFinite(x.eta_to_user_min))
+      .sort((a, b) => a.eta_to_user_min - b.eta_to_user_min);
+    if (!ranked.length) return null;
+    const chosen = ranked[0];
+    const sessionId = `sim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    this.sessions.set(sessionId, {
+      session_id: sessionId,
+      bus_id: chosen.bus.bus_id,
+      route_name: chosen.bus.route_name,
+      origin,
+      destination,
+      boarding_stop: targetBoarding,
+      onboard_confirmed: false,
+      created_at: new Date().toISOString(),
+    });
+    return { session_id: sessionId, bus_id: chosen.bus.bus_id, eta_to_user_min: chosen.eta_to_user_min };
+  }
+
+  async getTrackingSession(sessionId) {
+    await this.advance(Date.now());
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    const bus = this.buses.find((b) => b.bus_id === session.bus_id);
+    if (!bus) return null;
+    const etaToUser = this._etaToStopMinutes(bus, session.boarding_stop);
+    const etaFromOriginToDest = this._etaBetweenStopsOnRoute(bus, session.origin, session.destination);
+    const remainingToDest = session.onboard_confirmed
+      ? this._etaToStopMinutes(bus, session.destination)
+      : null;
+    return {
+      ...session,
+      bus_status: bus.status,
+      bus_position: { lat: bus.lat, lon: bus.lon, from_stop: bus.from_stop, to_stop: bus.to_stop },
+      eta_to_user_min: etaToUser,
+      eta_origin_to_destination_min: etaFromOriginToDest,
+      eta_to_destination_min: remainingToDest,
+    };
+  }
+
+  async confirmOnboard(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    session.onboard_confirmed = true;
+    session.onboard_confirmed_at = new Date().toISOString();
+    return this.getTrackingSession(sessionId);
   }
 }
 
