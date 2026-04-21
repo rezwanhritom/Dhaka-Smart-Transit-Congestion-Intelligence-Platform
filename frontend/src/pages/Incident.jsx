@@ -236,7 +236,7 @@ function Incident() {
 
         <div>
           <label className="block text-sm font-medium text-slate-200 mb-2">
-            Location *
+            Location {formData.area ? '(optional when area is selected)' : '*'}
           </label>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <input
@@ -246,7 +246,7 @@ function Incident() {
               onChange={handleInputChange}
               placeholder="Latitude"
               step="any"
-              required
+              required={!formData.area}
               className="px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <input
@@ -256,7 +256,7 @@ function Incident() {
               onChange={handleInputChange}
               placeholder="Longitude"
               step="any"
-              required
+              required={!formData.area}
               className="px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <button

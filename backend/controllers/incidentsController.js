@@ -21,10 +21,12 @@ export const getIncidentAreas = async (req, res, next) => {
 export const submitIncident = async (req, res, next) => {
   try {
     const { category, busId, routeId, latitude, longitude, description, area: areaRaw } = req.body;
-    const lat = Number(latitude);
-    const lon = Number(longitude);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-      return res.status(400).json({ message: 'Valid latitude and longitude are required' });
+    const requestedArea = String(areaRaw ?? '').trim();
+    const hasLatitude = latitude !== undefined && latitude !== null && String(latitude).trim() !== '';
+    const hasLongitude = longitude !== undefined && longitude !== null && String(longitude).trim() !== '';
+
+    if (hasLatitude !== hasLongitude) {
+      return res.status(400).json({ message: 'Both latitude and longitude are required when providing coordinates' });
     }
 
     // Handle file uploads
@@ -35,16 +37,45 @@ export const submitIncident = async (req, res, next) => {
       });
     }
 
-    const geo = await deriveIncidentGeoContext({ latitude: lat, longitude: lon });
     const stops = await loadStopsDataset();
     const areas = buildIncidentAreasFromStops(stops);
-    const areaSet = new Set(areas.map((a) => a.area));
-    const requestedArea = String(areaRaw ?? '').trim();
+    const areaMap = new Map(areas.map((a) => [a.area, a]));
+    const areaSet = new Set(areaMap.keys());
+
+    let lat;
+    let lon;
+    if (hasLatitude && hasLongitude) {
+      lat = Number(latitude);
+      lon = Number(longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return res.status(400).json({ message: 'Valid latitude and longitude are required' });
+      }
+    } else {
+      if (!requestedArea) {
+        return res.status(400).json({ message: 'Select an area or provide valid latitude and longitude' });
+      }
+      const selectedArea = areaMap.get(requestedArea);
+      if (!selectedArea) {
+        return res.status(422).json({
+          message: 'Please choose a valid area',
+          available_areas: [...areaSet],
+        });
+      }
+      const centerLat = Number(selectedArea?.center?.lat);
+      const centerLng = Number(selectedArea?.center?.lng);
+      if (!Number.isFinite(centerLat) || !Number.isFinite(centerLng)) {
+        return res.status(422).json({ message: `Selected area "${requestedArea}" does not have valid center coordinates` });
+      }
+      lat = centerLat;
+      lon = centerLng;
+    }
+
+    const geo = await deriveIncidentGeoContext({ latitude: lat, longitude: lon });
     const autoArea = String(geo?.area ?? '').trim();
-    const finalArea = areaSet.has(autoArea)
-      ? autoArea
-      : requestedArea && areaSet.has(requestedArea)
-        ? requestedArea
+    const finalArea = requestedArea && areaSet.has(requestedArea)
+      ? requestedArea
+      : areaSet.has(autoArea)
+        ? autoArea
         : null;
     if (!finalArea) {
       return res.status(422).json({
