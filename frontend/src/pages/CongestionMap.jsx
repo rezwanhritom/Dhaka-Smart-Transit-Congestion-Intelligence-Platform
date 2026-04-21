@@ -13,8 +13,9 @@ function levelColor(level) {
 
 function CongestionMap() {
   const [hour, setHour] = useState(() => new Date().getHours());
+  const [viewMode, setViewMode] = useState('current');
   const [features, setFeatures] = useState([]);
-  const [meta, setMeta] = useState({ hour: null, dow: null });
+  const [meta, setMeta] = useState({ hour: null, dow: null, observedUpdatedAt: null });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -24,7 +25,11 @@ function CongestionMap() {
     try {
       const { data } = await api.get('/congestion/map', { params: { hour } });
       setFeatures(Array.isArray(data?.features) ? data.features : []);
-      setMeta({ hour: data?.hour, dow: data?.dow });
+      setMeta({
+        hour: data?.hour,
+        dow: data?.dow,
+        observedUpdatedAt: data?.observed_updated_at ?? null,
+      });
     } catch (err) {
       const msg =
         err.response?.data?.message ?? err.message ?? 'Failed to load congestion map';
@@ -39,6 +44,40 @@ function CongestionMap() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    if (viewMode !== 'current') return undefined;
+    const baseUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/$/, '');
+    const stream = new EventSource(`${baseUrl}/congestion/map/stream?hour=${hour}`);
+    stream.addEventListener('congestion_update', (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        setFeatures(Array.isArray(payload?.features) ? payload.features : []);
+        setMeta((prev) => ({
+          ...prev,
+          hour: payload?.hour,
+          dow: payload?.dow,
+          observedUpdatedAt: payload?.observed_updated_at ?? null,
+        }));
+      } catch {
+        // Ignore malformed stream payloads.
+      }
+    });
+    return () => stream.close();
+  }, [hour, viewMode]);
+
+  const hotspots = useMemo(() => {
+    const routeScores = new Map();
+    for (const f of features) {
+      const level = String(f?.level ?? '').toUpperCase();
+      const weight = level === 'HIGH' ? 2 : level === 'MEDIUM' ? 1 : 0;
+      if (weight === 0) continue;
+      routeScores.set(f.route, (routeScores.get(f.route) ?? 0) + weight);
+    }
+    return Array.from(routeScores.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+  }, [features]);
+
   const lines = useMemo(
     () =>
       features.map((f) => ({
@@ -48,7 +87,7 @@ function CongestionMap() {
           [f.to.lat, f.to.lon],
         ],
         color: levelColor(f.level),
-        label: `${f.route}: ${f.from.name} → ${f.to.name} (${f.level})`,
+        label: `${f.route}: ${f.from.name} → ${f.to.name} (${f.level}, ${f.source ?? 'model'})`,
       })),
     [features],
   );
@@ -66,6 +105,17 @@ function CongestionMap() {
 
         <div className="flex flex-wrap items-center gap-4 rounded-xl border border-white/10 bg-white/5 p-4">
           <label className="flex items-center gap-2 text-sm text-slate-300">
+            Mode
+            <select
+              value={viewMode}
+              onChange={(e) => setViewMode(e.target.value)}
+              className="rounded-md border border-white/20 bg-slate-900 px-2 py-1 text-white"
+            >
+              <option value="current">Current + stream</option>
+              <option value="predicted">Predicted snapshot</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-300">
             Hour (0–23)
             <input
               type="range"
@@ -78,8 +128,22 @@ function CongestionMap() {
             <span className="font-mono text-white">{hour}</span>
           </label>
           <span className="text-xs text-slate-500">
-            Model hour {meta.hour ?? '—'} · refresh on release
+            Model hour {meta.hour ?? '—'} · observed update {meta.observedUpdatedAt ?? 'N/A'}
           </span>
+        </div>
+        <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+          <h2 className="text-sm font-semibold text-white">Corridor hotlist</h2>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-300">
+            {hotspots.length === 0 ? (
+              <span>No current hotspots detected.</span>
+            ) : (
+              hotspots.map(([route, score]) => (
+                <span key={route} className="rounded border border-amber-300/30 bg-amber-500/10 px-2 py-1">
+                  {route}: score {score}
+                </span>
+              ))
+            )}
+          </div>
         </div>
 
         {error ? (

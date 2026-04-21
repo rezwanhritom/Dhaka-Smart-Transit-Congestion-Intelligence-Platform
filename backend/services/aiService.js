@@ -23,13 +23,29 @@ function getAiClient() {
   return cachedClient;
 }
 
+async function timed(label, fn) {
+  const started = Date.now();
+  try {
+    const out = await fn();
+    const elapsedMs = Date.now() - started;
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[aiService] ${label} ok in ${elapsedMs}ms`);
+    }
+    return out;
+  } catch (error) {
+    const elapsedMs = Date.now() - started;
+    console.warn(`[aiService] ${label} failed in ${elapsedMs}ms`);
+    throw error;
+  }
+}
+
 export const getETA = async (payload) => {
-  const { data } = await getAiClient().post('/eta', payload);
+  const { data } = await timed('eta', () => getAiClient().post('/eta', payload));
   return data;
 };
 
 export const getCrowding = async (payload) => {
-  const { data } = await getAiClient().post('/crowding', payload);
+  const { data } = await timed('crowding', () => getAiClient().post('/crowding', payload));
   return data;
 };
 
@@ -57,16 +73,22 @@ export const getPlannerTrafficLevel = async (payload) => {
 };
 
 export const predictCongestion = async (payload) => {
-  const { data } = await getAiClient().post('/congestion/predict', payload);
+  const { data } = await timed('congestion.predict', () =>
+    getAiClient().post('/congestion/predict', payload),
+  );
   return data;
 };
 
 export const getCongestionCurrent = async (params = {}) => {
-  const { data } = await getAiClient().get('/congestion/current', { params });
+  const { data } = await timed('congestion.current', () =>
+    getAiClient().get('/congestion/current', { params }),
+  );
   return data;
 };
 
 export const getCongestionForecast = async (params) => {
-  const { data } = await getAiClient().get('/congestion/forecast', { params });
+  const { data } = await timed('congestion.forecast', () =>
+    getAiClient().get('/congestion/forecast', { params }),
+  );
   return data;
 };

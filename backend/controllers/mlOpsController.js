@@ -1,6 +1,41 @@
 import ModelRegistry from '../models/ModelRegistry.js';
 import AuditLog from '../models/AuditLog.js';
 import FeatureFlag from '../models/FeatureFlag.js';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ACTIVE_MANIFEST_PATH = path.join(
+  __dirname,
+  '..',
+  '..',
+  'ai-services',
+  'data',
+  'active_model_manifest.json',
+);
+
+async function writeActiveModelManifest(doc) {
+  let manifest = { activeModels: {}, updatedAt: null };
+  try {
+    const raw = await fs.readFile(ACTIVE_MANIFEST_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') manifest = parsed;
+  } catch {
+    manifest = { activeModels: {}, updatedAt: null };
+  }
+  if (!manifest.activeModels || typeof manifest.activeModels !== 'object') {
+    manifest.activeModels = {};
+  }
+  manifest.activeModels[doc.modelKey] = {
+    version: doc.version,
+    artifactPath: doc.artifactPath || '',
+    checksum: doc.checksum || '',
+    activatedAt: new Date().toISOString(),
+  };
+  manifest.updatedAt = new Date().toISOString();
+  await fs.writeFile(ACTIVE_MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+}
 
 export const listModels = async (req, res, next) => {
   try {
@@ -15,7 +50,7 @@ export const listModels = async (req, res, next) => {
 
 export const registerModel = async (req, res, next) => {
   try {
-    const { modelKey, version, metrics, notes, featureFlags } = req.body ?? {};
+    const { modelKey, version, metrics, notes, featureFlags, artifactPath, checksum } = req.body ?? {};
     if (typeof modelKey !== 'string' || !modelKey.trim()) {
       return res.status(400).json({ message: 'modelKey is required' });
     }
@@ -29,6 +64,8 @@ export const registerModel = async (req, res, next) => {
       metrics: metrics && typeof metrics === 'object' ? metrics : {},
       notes: typeof notes === 'string' ? notes : '',
       featureFlags: featureFlags && typeof featureFlags === 'object' ? featureFlags : {},
+      artifactPath: typeof artifactPath === 'string' ? artifactPath.trim() : '',
+      checksum: typeof checksum === 'string' ? checksum.trim() : '',
     });
     await AuditLog.create({
       action: 'ml_model.register',
@@ -56,6 +93,7 @@ export const activateModel = async (req, res, next) => {
     );
     doc.status = 'active';
     await doc.save();
+    await writeActiveModelManifest(doc);
 
     await AuditLog.create({
       action: 'ml_model.activate',
@@ -108,6 +146,7 @@ export const rollbackModel = async (req, res, next) => {
     );
     previous.status = 'active';
     await previous.save();
+    await writeActiveModelManifest(previous);
 
     await AuditLog.create({
       action: 'ml_model.rollback',
@@ -169,6 +208,19 @@ export const listAuditLogs = async (req, res, next) => {
       .limit(limit)
       .lean();
     return res.json({ data: rows });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const getRuntimeManifest = async (req, res, next) => {
+  try {
+    try {
+      const raw = await fs.readFile(ACTIVE_MANIFEST_PATH, 'utf8');
+      return res.json(JSON.parse(raw));
+    } catch {
+      return res.json({ activeModels: {}, updatedAt: null });
+    }
   } catch (e) {
     next(e);
   }

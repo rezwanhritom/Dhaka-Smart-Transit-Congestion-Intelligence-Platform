@@ -7,6 +7,7 @@ from __future__ import annotations
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+import json
 
 import joblib
 import numpy as np
@@ -30,6 +31,16 @@ traffic_encoder = None
 crowd_encoder = None
 
 
+def _read_active_manifest() -> dict:
+    p = ml_paths.DATA_DIR / "active_model_manifest.json"
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global eta_model, crowd_model, route_encoder, stop_encoder, traffic_encoder, crowd_encoder
@@ -46,8 +57,12 @@ async def lifespan(app: FastAPI):
             "python ai-services/training/train_eta.py && "
             "python ai-services/training/train_crowd.py"
         ) from exc
+    manifest = _read_active_manifest()
+    active = manifest.get("activeModels") if isinstance(manifest, dict) else {}
+    congestion_cfg = active.get("congestion") if isinstance(active, dict) else {}
+    model_path = congestion_cfg.get("artifactPath") if isinstance(congestion_cfg, dict) else None
+    congestion_api.configure_runtime_artifacts(model_path=model_path)
     incidents_api.load_incident_artifacts()
-    congestion_api.load_congestion_artifacts()
     yield
 
 

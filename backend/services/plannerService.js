@@ -3,6 +3,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { getCrowding, getETA, getPlannerTrafficLevel, predictCongestion } from './aiService.js';
+import TransitRoute from '../models/TransitRoute.js';
+import FeatureFlag from '../models/FeatureFlag.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -48,6 +50,25 @@ let routeGeometryCache = null;
 export async function loadRoutesDataset() {
   if (routesCache) {
     return routesCache;
+  }
+  try {
+    const dbRoutes = await TransitRoute.find().sort({ name: 1 }).lean();
+    if (Array.isArray(dbRoutes) && dbRoutes.length > 0) {
+      routesCache = dbRoutes
+        .map((r) => ({
+          name: String(r?.name ?? '').trim(),
+          stops: Array.isArray(r?.stops) ? r.stops.map((s) => String(s).trim()).filter(Boolean) : [],
+          headwayMinutes: Number.isFinite(Number(r?.headwayMinutes)) ? Number(r.headwayMinutes) : 12,
+          serviceWindowStart: typeof r?.serviceWindowStart === 'string' ? r.serviceWindowStart : '06:00',
+          serviceWindowEnd: typeof r?.serviceWindowEnd === 'string' ? r.serviceWindowEnd : '23:00',
+        }))
+        .filter((r) => r.name && r.stops.length >= 2);
+      if (routesCache.length > 0) {
+        return routesCache;
+      }
+    }
+  } catch {
+    // DB unavailable or not connected: fall back to static dataset.
   }
   const raw = await fs.readFile(ROUTES_DATA_PATH, 'utf8');
   routesCache = JSON.parse(raw);
@@ -127,8 +148,17 @@ export function trafficLevelForHour(hour) {
  * @returns {Promise<'HIGH'|'MEDIUM'|'LOW'>}
  */
 export async function resolveTrafficLevelForPlanning(hour) {
+  let variant = 'baseline';
   try {
-    const level = await getPlannerTrafficLevel({ hour });
+    const flag = await FeatureFlag.findOne({ key: 'traffic_prediction_mode' }).lean();
+    if (flag && typeof flag.value === 'string' && flag.value.trim()) {
+      variant = flag.value.trim();
+    }
+  } catch {
+    variant = 'baseline';
+  }
+  try {
+    const level = await getPlannerTrafficLevel({ hour, model_variant: variant });
     const s = String(level ?? '')
       .trim()
       .toUpperCase();
@@ -677,6 +707,21 @@ function computeScore({ eta, transferCount, crowd, walkMinutes, preference }) {
   return eta + transferCount * 10 + crowdPenalty * 5 + walkMinutes;
 }
 
+function averageHeadwayForPath(linesUsed, routes) {
+  if (!Array.isArray(linesUsed) || linesUsed.length === 0) return 12;
+  let total = 0;
+  let count = 0;
+  for (const line of linesUsed) {
+    const route = routes.find((r) => String(r?.name ?? '').trim() === String(line).trim());
+    const hw = Number(route?.headwayMinutes);
+    if (Number.isFinite(hw) && hw > 0) {
+      total += hw;
+      count += 1;
+    }
+  }
+  return count > 0 ? total / count : 12;
+}
+
 /**
  * @param {{ origin: string, destination: string, hour: number, minute?: number, requested_time?: string, time_type?: 'leave_after'|'arrive_by', preference?: 'fastest'|'less_crowded'|'fewer_transfers' }} params
  * @returns {Promise<Array<Record<string, unknown>>>}
@@ -777,7 +822,7 @@ export async function planCommute({
         crowd: finalCrowd,
         walkMinutes: p.walkMinutes,
         preference,
-      }),
+      }) + averageHeadwayForPath(p.linesUsed, routes) * 0.8,
       map_segments: mapSegments,
       legs: p.legs,
     });

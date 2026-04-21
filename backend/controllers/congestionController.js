@@ -40,6 +40,36 @@ function parseSegmentKey(segmentKey) {
   return { route, from: a, to: b };
 }
 
+async function buildMapFeatures(params = {}) {
+  const coords = await loadStopCoords();
+  const current = await getCongestionCurrent(params);
+  const segments = Array.isArray(current?.segments) ? current.segments : [];
+  const features = [];
+  for (const seg of segments) {
+    const key = seg.segment_key;
+    const parsed = parseSegmentKey(key);
+    if (!parsed) continue;
+    const ca = coords.get(parsed.from);
+    const cb = coords.get(parsed.to);
+    if (!ca || !cb || !Number.isFinite(ca.lat) || !Number.isFinite(cb.lat)) continue;
+    features.push({
+      segment_key: key,
+      level: seg.level,
+      model_level: seg.model_level ?? seg.level,
+      source: seg.source ?? 'model',
+      route: parsed.route,
+      from: { name: parsed.from, ...ca },
+      to: { name: parsed.to, ...cb },
+    });
+  }
+  return {
+    hour: current?.hour,
+    dow: current?.dow,
+    observed_updated_at: current?.observed_updated_at ?? null,
+    features,
+  };
+}
+
 export const getCurrent = async (req, res, next) => {
   try {
     const hour = req.query.hour !== undefined ? Number(req.query.hour) : undefined;
@@ -83,31 +113,12 @@ export const postPredict = async (req, res, next) => {
 
 export const getMap = async (req, res, next) => {
   try {
-    const coords = await loadStopCoords();
     const hour = req.query.hour !== undefined ? Number(req.query.hour) : undefined;
     const dow = req.query.dow !== undefined ? Number(req.query.dow) : undefined;
     const params = {};
     if (Number.isInteger(hour) && hour >= 0 && hour <= 23) params.hour = hour;
     if (Number.isInteger(dow) && dow >= 0 && dow <= 6) params.dow = dow;
-    const current = await getCongestionCurrent(params);
-    const segments = Array.isArray(current?.segments) ? current.segments : [];
-    const features = [];
-    for (const seg of segments) {
-      const key = seg.segment_key;
-      const parsed = parseSegmentKey(key);
-      if (!parsed) continue;
-      const ca = coords.get(parsed.from);
-      const cb = coords.get(parsed.to);
-      if (!ca || !cb || !Number.isFinite(ca.lat) || !Number.isFinite(cb.lat)) continue;
-      features.push({
-        segment_key: key,
-        level: seg.level,
-        route: parsed.route,
-        from: { name: parsed.from, ...ca },
-        to: { name: parsed.to, ...cb },
-      });
-    }
-    return res.json({ hour: current?.hour, dow: current?.dow, features });
+    return res.json(await buildMapFeatures(params));
   } catch (error) {
     if (error.code === 'ENOENT') {
       return res.status(500).json({ message: 'stops geodata missing' });
@@ -115,6 +126,42 @@ export const getMap = async (req, res, next) => {
     if (error.statusCode === 503) {
       return res.status(503).json({ message: error.message });
     }
+    next(error);
+  }
+};
+
+export const streamMap = async (req, res, next) => {
+  try {
+    const hour = req.query.hour !== undefined ? Number(req.query.hour) : undefined;
+    const dow = req.query.dow !== undefined ? Number(req.query.dow) : undefined;
+    const params = {};
+    if (Number.isInteger(hour) && hour >= 0 && hour <= 23) params.hour = hour;
+    if (Number.isInteger(dow) && dow >= 0 && dow <= 6) params.dow = dow;
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    let previousSignature = '';
+    const emit = async () => {
+      const payload = await buildMapFeatures(params);
+      const signature = JSON.stringify(payload.features.map((f) => `${f.segment_key}:${f.level}`));
+      if (signature !== previousSignature) {
+        previousSignature = signature;
+        res.write(`event: congestion_update\n`);
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      }
+    };
+
+    await emit();
+    const timer = setInterval(() => {
+      emit().catch(() => {
+        /* keep stream alive */
+      });
+    }, 10000);
+
+    req.on('close', () => clearInterval(timer));
+  } catch (error) {
     next(error);
   }
 };

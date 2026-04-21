@@ -12,6 +12,12 @@ function routeFromSegmentKey(segmentKey) {
   return String(segmentKey).slice(0, i).trim();
 }
 
+function recommendedWindow(hour) {
+  if (hour >= 7 && hour <= 10) return 'next_30_to_90_min';
+  if (hour >= 17 && hour <= 20) return 'next_30_to_120_min';
+  return 'next_60_to_180_min';
+}
+
 /**
  * Heuristic suggestions from congestion snapshot + optional DB routes.
  * @param {{ hour?: number, dow?: number }} opts
@@ -48,6 +54,8 @@ export async function buildOptimizationSuggestions(opts = {}) {
         type: 'add_frequency',
         priority: 'high',
         route,
+        expected_impact: `Potentially reduce peak segment delay by ${Math.min(30, 8 + count * 4)}%`,
+        recommended_window: recommendedWindow(hour),
         message: `Peak congestion on ${route}: ${count} hot segment(s) at hour ${hour}. Consider adding buses or staggering departures.`,
       });
     }
@@ -58,6 +66,8 @@ export async function buildOptimizationSuggestions(opts = {}) {
         type: 'monitor',
         priority: 'medium',
         route,
+        expected_impact: `Can reduce spillover congestion risk by ${Math.min(20, 5 + count * 2)}%`,
+        recommended_window: recommendedWindow(hour),
         message: `Elevated congestion spread on ${route} (${count} medium segments). Review headways.`,
       });
     }
@@ -77,6 +87,8 @@ export async function buildOptimizationSuggestions(opts = {}) {
           type: 'data_hygiene',
           priority: 'low',
           route: null,
+          expected_impact: 'Improves planner-route consistency across admin and AI modules',
+          recommended_window: 'before_next_route_planning_cycle',
           message:
             'No routes in admin database yet; planner still uses ai-services/data/routes.json. Import routes via admin API when ready.',
         });

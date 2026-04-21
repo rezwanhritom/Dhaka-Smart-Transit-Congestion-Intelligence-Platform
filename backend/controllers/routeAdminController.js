@@ -27,7 +27,7 @@ export const getRoute = async (req, res, next) => {
 
 export const createRoute = async (req, res, next) => {
   try {
-    const { name, stops, scheduleNote } = req.body ?? {};
+    const { name, stops, scheduleNote, headwayMinutes, serviceWindowStart, serviceWindowEnd } = req.body ?? {};
     if (typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ message: 'name is required' });
     }
@@ -39,6 +39,9 @@ export const createRoute = async (req, res, next) => {
       name: name.trim(),
       stops: cleanStops,
       scheduleNote: typeof scheduleNote === 'string' ? scheduleNote : '',
+      headwayMinutes: Number.isFinite(Number(headwayMinutes)) ? Number(headwayMinutes) : 12,
+      serviceWindowStart: typeof serviceWindowStart === 'string' ? serviceWindowStart : '06:00',
+      serviceWindowEnd: typeof serviceWindowEnd === 'string' ? serviceWindowEnd : '23:00',
     });
     await AuditLog.create({
       action: 'transit_route.create',
@@ -60,13 +63,16 @@ export const updateRoute = async (req, res, next) => {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ message: 'Invalid route id' });
     }
-    const { name, stops, scheduleNote } = req.body ?? {};
+    const { name, stops, scheduleNote, headwayMinutes, serviceWindowStart, serviceWindowEnd } = req.body ?? {};
     const patch = {};
     if (typeof name === 'string' && name.trim()) patch.name = name.trim();
     if (Array.isArray(stops) && stops.length >= 2) {
       patch.stops = stops.map((s) => String(s).trim()).filter(Boolean);
     }
     if (typeof scheduleNote === 'string') patch.scheduleNote = scheduleNote;
+    if (Number.isFinite(Number(headwayMinutes))) patch.headwayMinutes = Number(headwayMinutes);
+    if (typeof serviceWindowStart === 'string') patch.serviceWindowStart = serviceWindowStart;
+    if (typeof serviceWindowEnd === 'string') patch.serviceWindowEnd = serviceWindowEnd;
     const doc = await TransitRoute.findByIdAndUpdate(req.params.id, patch, {
       new: true,
       runValidators: true,

@@ -12,6 +12,8 @@ const modelRegistrySchema = new mongoose.Schema(
     metrics: { type: mongoose.Schema.Types.Mixed, default: {} },
     notes: { type: String, default: '' },
     featureFlags: { type: mongoose.Schema.Types.Mixed, default: {} },
+    artifactPath: { type: String, default: '' },
+    checksum: { type: String, default: '' },
   },
   { timestamps: true },
 );

@@ -3,6 +3,7 @@ import { requireAdminKey } from '../middleware/requireAdminKey.js';
 import {
   activateModel,
   archiveModel,
+  getRuntimeManifest,
   listAuditLogs,
   listFlags,
   listModels,
@@ -24,5 +25,6 @@ router.get('/flags', listFlags);
 router.put('/flags/:key', upsertFlag);
 
 router.get('/audit', listAuditLogs);
+router.get('/runtime-manifest', getRuntimeManifest);
 
 export default router;
