@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CircleMarker, MapContainer, TileLayer, Tooltip } from 'react-leaflet';
+import { io } from 'socket.io-client';
 import {
   getLiveBusLocations,
   getNearbyStops,
@@ -18,6 +19,11 @@ function NearbyLive() {
   const [loadingStops, setLoadingStops] = useState(false);
   const [loadingBuses, setLoadingBuses] = useState(false);
   const [error, setError] = useState('');
+  const [socketMode, setSocketMode] = useState('connecting');
+
+  const socketBaseUrl =
+    (import.meta.env.VITE_SOCKET_URL && String(import.meta.env.VITE_SOCKET_URL).trim()) ||
+    (import.meta.env.VITE_API_URL || '').replace(/\/api\/?$/, '');
 
   const loadLive = async () => {
     setLoadingBuses(true);
@@ -33,9 +39,52 @@ function NearbyLive() {
   };
 
   useEffect(() => {
+    let disconnected = false;
+    const socket = io(socketBaseUrl, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      timeout: 8000,
+    });
+
+    socket.on('connect', () => {
+      if (disconnected) return;
+      setSocketMode('live');
+      socket.emit('live:subscribe');
+    });
+
+    socket.on('live:buses', (payload) => {
+      if (disconnected) return;
+      const list = Array.isArray(payload?.buses) ? payload.buses : [];
+      setLiveBuses(list);
+      setLoadingBuses(false);
+      setError('');
+    });
+
+    socket.on('disconnect', () => {
+      if (disconnected) return;
+      setSocketMode('fallback');
+    });
+
+    socket.on('connect_error', () => {
+      if (disconnected) return;
+      setSocketMode('fallback');
+    });
+
+    // Fallback polling while socket is unavailable.
+    const pollId = setInterval(() => {
+      if (socket.connected) return;
+      loadLive();
+    }, 5000);
+
+    // Initial fallback fetch so page has data immediately.
     loadLive();
-    const id = setInterval(loadLive, 4000);
-    return () => clearInterval(id);
+
+    return () => {
+      disconnected = true;
+      clearInterval(pollId);
+      socket.disconnect();
+    };
   }, []);
 
   const onUseLocation = () => {
@@ -231,9 +280,22 @@ function NearbyLive() {
           <div className="rounded-xl border border-white/10 bg-white/5 p-4">
             <div className="mb-2 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-white">Live bus feed</h2>
-              <span className="text-xs text-slate-400">
-                {loadingBuses ? 'Refreshing...' : `${liveBuses.length} buses`}
-              </span>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-slate-400">
+                  {loadingBuses ? 'Refreshing...' : `${liveBuses.length} buses`}
+                </span>
+                <span
+                  className={`rounded px-2 py-0.5 ${
+                    socketMode === 'live'
+                      ? 'bg-emerald-500/20 text-emerald-300'
+                      : socketMode === 'fallback'
+                        ? 'bg-amber-500/20 text-amber-200'
+                        : 'bg-slate-500/20 text-slate-300'
+                  }`}
+                >
+                  {socketMode === 'live' ? 'WebSocket live' : socketMode === 'fallback' ? 'Polling fallback' : 'Connecting'}
+                </span>
+              </div>
             </div>
             <div className="max-h-[220px] overflow-y-auto">
               <table className="w-full text-left text-xs text-slate-300">

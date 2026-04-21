@@ -17,8 +17,14 @@ The repo **does not commit** `.env` files (they are in `.gitignore`). You keep *
 | `PORT` | Backend port (default `5000`). |
 | `ADMIN_KEY` | Optional. If unset, admin routes accept `x-admin-key: dev-secret-admin`. |
 | `FLEET_SIM_TIME_SCALE` | Optional planner simulation speed multiplier (default `1`). Example: `20` means simulation clock runs 20x faster. |
+| `SOCKET_CORS_ORIGIN` | Optional Socket.IO CORS origin (default `*`) for live bus websocket testing. |
 
-**Frontend** only sees variables named `VITE_*`. Set `VITE_API_URL` to either `/api` (proxy) or `http://localhost:5000/api`.
+**Frontend** only sees variables named `VITE_*`.
+
+| Variable | What it is |
+|----------|------------|
+| `VITE_API_URL` | API base URL, e.g. `http://localhost:5000/api` |
+| `VITE_SOCKET_URL` | Optional explicit websocket URL, e.g. `http://localhost:5000` (recommended for teammate clarity) |
 
 ---
 
@@ -128,6 +134,13 @@ Planner tracking APIs (Phase 5):
 - `POST /api/planner/sim/session` with `{ origin, destination, route_name, boarding_stop? }` — bind best matching active simulated bus
 - `GET /api/planner/sim/session/:session_id` — live tracker status (`eta_to_user_min`, bus position, optional `eta_to_destination_min`)
 - `POST /api/planner/sim/session/:session_id/onboard` — mark rider onboard; tracker switches to destination ETA
+
+Live websocket skeleton (Nearby/Live module foundation):
+
+- Socket.IO path on backend server (same port as API, e.g. `ws://localhost:5000`)
+- Events:
+  - server -> client: `live:connected`, `live:buses`, `live:error`
+  - client -> server: `live:subscribe` (request immediate snapshot)
 
 ---
 
