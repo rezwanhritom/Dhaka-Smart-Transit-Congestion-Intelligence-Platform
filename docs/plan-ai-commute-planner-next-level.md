@@ -92,10 +92,10 @@ If the team adds **real** `bus_id` positions later, the planner’s simulation l
 
 ### Phase 2 — Time, congestion, and ranking (PDF alignment)
 
-- [ ] **2.1** Extend API contract: `minute` or `time` (HH:MM) + `time_type`; backend normalizes to features for AI calls.  
-- [ ] **2.2** Optionally pass **per-segment** congestion (from existing segment keys) into ETA instead of only global `traffic_level` — define minimal contract in FastAPI + Node.  
-- [ ] **2.3** Implement **multi-criteria score** or **modes** (“Fastest”, “Less crowded”, “Fewer transfers”) using ETA + transfer count + crowding penalty.  
-- [ ] **2.4** Update [`Planner.jsx`](../frontend/src/pages/Planner.jsx) for new inputs and result labels.
+- [x] **2.1** Extend API contract: `minute` or `time` (HH:MM) + `time_type`; backend normalizes to features for AI calls. *(Implemented in `plannerController.js`: accepts `time` and remains backward-compatible with `hour`.)*  
+- [x] **2.2** Optionally pass **per-segment** congestion (from existing segment keys) into ETA instead of only global `traffic_level` — define minimal contract in FastAPI + Node. *(Implemented in `plannerService.js`: calls `/congestion/predict` for route segment keys and injects segment-level `traffic_level` into ETA calls with global fallback.)*  
+- [x] **2.3** Implement **multi-criteria score** or **modes** (“Fastest”, “Less crowded”, “Fewer transfers”) using ETA + transfer count + crowding penalty. *(Implemented in `plannerService.js` with `preference` + `score` ranking.)*  
+- [x] **2.4** Update [`Planner.jsx`](../frontend/src/pages/Planner.jsx) for new inputs and result labels. *(Planner now sends `time` + `preference`, and displays suggested departure time.)*
 
 **Exit criteria:** Spec text “score combining time, transfers, walking, crowding” is partially or fully satisfied; walking optional in a later sub-phase.
 

@@ -42,11 +42,14 @@ From folder `ai-services/`:
 
 ```bash
 pip install -r requirements.txt
+python training/augment_return_training_data.py
 python training/train_eta.py
 python training/train_crowd.py
 python training/train_incidents.py
 python training/train_congestion.py
 ```
+
+`augment_return_training_data.py` keeps planner ETA/crowd CSVs aligned with bidirectional routes (`... (Return)` rows) and is safe to re-run.
 
 After this you should see `.pkl` files under `models/` and `encoders/`, and CSVs under `data/` (some scripts write or overwrite training CSVs).
 
@@ -123,6 +126,7 @@ Checks:
 | Backend exits immediately | `MONGO_URI` wrong or Mongo down |
 | 503 / “AI_SERVICE_URL” | Backend `.env` missing `AI_SERVICE_URL` or FastAPI not running |
 | ETA 400 “Unknown route” | Stop/route spelling must match `routes.json` and training data |
+| Routes changed but planner still misses reverse direction | Re-run `python training/augment_return_training_data.py` then retrain ETA/crowd/congestion and restart AI + backend |
 | Empty map | Stop names on segments must exist in `ai-services/data/stops.json` with lat/lon |
 | Admin 401 | Send header `x-admin-key` matching `ADMIN_KEY` or use `dev-secret-admin` |
 

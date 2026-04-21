@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { getCrowding, getETA, getPlannerTrafficLevel } from './aiService.js';
+import { getCrowding, getETA, getPlannerTrafficLevel, predictCongestion } from './aiService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -88,6 +88,44 @@ export async function resolveTrafficLevelForPlanning(hour) {
   return trafficLevelForHour(hour);
 }
 
+function segmentKey(route, fromStop, toStop) {
+  return `${route}|${fromStop}->${toStop}`;
+}
+
+async function resolveSegmentTrafficLevels(routes, hour, fallbackTrafficLevel) {
+  const keys = [];
+  for (const r of routes) {
+    const routeName = String(r?.name ?? '').trim();
+    const stops = Array.isArray(r?.stops) ? r.stops.map((s) => String(s).trim()) : [];
+    if (!routeName || stops.length < 2) continue;
+    for (let i = 0; i < stops.length - 1; i += 1) {
+      keys.push(segmentKey(routeName, stops[i], stops[i + 1]));
+    }
+  }
+  if (keys.length === 0) return new Map();
+
+  try {
+    const res = await predictCongestion({ segment_keys: keys, hour });
+    const list = Array.isArray(res?.predictions) ? res.predictions : [];
+    const out = new Map();
+    for (const row of list) {
+      const k = String(row?.segment_key ?? '').trim();
+      const lvl = String(row?.level ?? '')
+        .trim()
+        .toUpperCase();
+      if (!k) continue;
+      if (lvl === 'LOW' || lvl === 'MEDIUM' || lvl === 'HIGH') {
+        out.set(k, lvl);
+      }
+    }
+    return out;
+  } catch {
+    const out = new Map();
+    for (const k of keys) out.set(k, fallbackTrafficLevel);
+    return out;
+  }
+}
+
 function normalizeCrowdLevel(level) {
   const s = String(level).trim().toUpperCase();
   if (s in CROWD_RANK) return s;
@@ -96,6 +134,29 @@ function normalizeCrowdLevel(level) {
 
 function worseCrowd(a, b) {
   return CROWD_RANK[a] >= CROWD_RANK[b] ? a : b;
+}
+
+function pad2(n) {
+  return String(Math.max(0, Math.floor(n))).padStart(2, '0');
+}
+
+function toTimeString(hour, minute = 0) {
+  const h = ((Number(hour) % 24) + 24) % 24;
+  const m = Math.max(0, Math.min(59, Math.floor(Number(minute) || 0)));
+  return `${pad2(h)}:${pad2(m)}`;
+}
+
+function minutesSinceMidnight(hour, minute = 0) {
+  return Math.max(0, Math.min(23, Number(hour) || 0)) * 60 + Math.max(0, Math.min(59, Number(minute) || 0));
+}
+
+function normalizePreference(value) {
+  const s = String(value ?? '')
+    .trim()
+    .toLowerCase();
+  if (s === 'less_crowded') return 'less_crowded';
+  if (s === 'fewer_transfers') return 'fewer_transfers';
+  return 'fastest';
 }
 
 function stateKey(stop, route) {
@@ -134,7 +195,7 @@ function routesServingStop(routes, stop) {
  * @param {string} trafficLevel
  * @returns {Promise<Array<{ totalEta: number, legs: Array<{ from_stop: string, to_stop: string, route: string, eta: number, crowd: string, kind: 'ride'|'transfer' }>, explanation: string }>>}
  */
-export async function findPathsWithTransfers(origin, destination, hour, trafficLevel) {
+export async function findPathsWithTransfers(origin, destination, hour, trafficLevel, segmentTraffic = new Map()) {
   const routes = await loadRoutesDataset();
   const originTrim = origin.trim();
   const destTrim = destination.trim();
@@ -191,13 +252,15 @@ export async function findPathsWithTransfers(origin, destination, hour, trafficL
    * @param {string} routeName
    */
   async function relaxRide(fromKey, fromCost, fromStop, toStop, routeName, h, traf) {
+    const segKey = segmentKey(routeName, fromStop, toStop);
+    const segTraffic = segmentTraffic.get(segKey) ?? traf;
     const [etaRes, crowdRes] = await Promise.all([
       getETA({
         route: routeName,
         from_stop: fromStop,
         to_stop: toStop,
         hour: h,
-        traffic_level: traf,
+        traffic_level: segTraffic,
       }),
       getCrowding({
         route: routeName,
@@ -354,45 +417,76 @@ export async function findPathsWithTransfers(origin, destination, hour, trafficL
 /**
  * @param {'leave_after'|'arrive_by'} timeType
  * @param {number} hour
+ * @param {number} minute
  * @param {number} totalEtaMinutes
- * @returns {{ feasible: boolean, suggested_departure_hour: number | null, note: string }}
+ * @returns {{ feasible: boolean, suggested_departure_hour: number | null, suggested_departure_time: string | null, note: string }}
  */
-export function evaluateTimeType(timeType, hour, totalEtaMinutes) {
+export function evaluateTimeType(timeType, hour, minute, totalEtaMinutes) {
+  const timeLabel = toTimeString(hour, minute);
   if (timeType === 'leave_after') {
     return {
       feasible: true,
       suggested_departure_hour: hour,
-      note: 'Travel context uses your chosen hour for traffic and crowding models.',
+      suggested_departure_time: timeLabel,
+      note: `Travel context uses ${timeLabel} for traffic and crowding models (model granularity: hour).`,
     };
   }
-  // arrive_by: hour = latest arrival hour (0–23); suggest departure hour
-  const needHours = totalEtaMinutes / 60;
-  const suggested = hour - needHours;
-  const feasible = suggested >= 0;
+  // arrive_by: requested time is latest arrival target; suggest departure time.
+  const arrivalMins = minutesSinceMidnight(hour, minute);
+  const departMins = Math.floor(arrivalMins - totalEtaMinutes);
+  const feasible = departMins >= 0;
+  const suggestedHour = feasible ? Math.floor(departMins / 60) : null;
+  const suggestedMinute = feasible ? departMins % 60 : null;
   return {
     feasible,
-    suggested_departure_hour: feasible
-      ? Math.max(0, Math.floor(suggested))
-      : null,
+    suggested_departure_hour: suggestedHour,
+    suggested_departure_time: feasible ? `${pad2(suggestedHour)}:${pad2(suggestedMinute)}` : null,
     note: feasible
-      ? `To arrive by ${hour}:00, start around hour ${Math.floor(suggested)} or earlier (approx.).`
+      ? `To arrive by ${timeLabel}, start around ${pad2(suggestedHour)}:${pad2(suggestedMinute)} or earlier (approx.).`
       : `Trip may exceed your arrival window if starting near hour 0; total time ~${Math.round(totalEtaMinutes)} min.`,
   };
 }
 
+function computeScore({ eta, transferCount, crowd, preference }) {
+  const crowdPenalty = CROWD_RANK[crowd] ?? 1;
+  if (preference === 'less_crowded') {
+    return crowdPenalty * 100 + eta + transferCount * 8;
+  }
+  if (preference === 'fewer_transfers') {
+    return transferCount * 120 + eta + crowdPenalty * 12;
+  }
+  // fastest
+  return eta + transferCount * 10 + crowdPenalty * 5;
+}
+
 /**
- * @param {{ origin: string, destination: string, hour: number, time_type?: 'leave_after'|'arrive_by' }} params
+ * @param {{ origin: string, destination: string, hour: number, minute?: number, requested_time?: string, time_type?: 'leave_after'|'arrive_by', preference?: 'fastest'|'less_crowded'|'fewer_transfers' }} params
  * @returns {Promise<Array<Record<string, unknown>>>}
  */
-export async function planCommute({ origin, destination, hour, time_type: timeTypeRaw = 'leave_after' }) {
+export async function planCommute({
+  origin,
+  destination,
+  hour,
+  minute = 0,
+  requested_time: requestedTimeRaw,
+  time_type: timeTypeRaw = 'leave_after',
+  preference: preferenceRaw = 'fastest',
+}) {
   const timeType = timeTypeRaw === 'arrive_by' ? 'arrive_by' : 'leave_after';
+  const preference = normalizePreference(preferenceRaw);
+  const requestedTime = typeof requestedTimeRaw === 'string' && requestedTimeRaw.trim()
+    ? requestedTimeRaw.trim()
+    : toTimeString(hour, minute);
+  const routes = await loadRoutesDataset();
   const trafficLevel = await resolveTrafficLevelForPlanning(hour);
+  const segmentTraffic = await resolveSegmentTrafficLevels(routes, hour, trafficLevel);
 
   const paths = await findPathsWithTransfers(
     origin.trim(),
     destination.trim(),
     hour,
     trafficLevel,
+    segmentTraffic,
   );
 
   const results = [];
@@ -406,7 +500,7 @@ export async function planCommute({ origin, destination, hour, time_type: timeTy
       }
     }
     const finalCrowd = rideLegs.reduce((worst, l) => worseCrowd(worst, l.crowd), 'LOW');
-    const timeEval = evaluateTimeType(timeType, hour, p.totalEta);
+    const timeEval = evaluateTimeType(timeType, hour, minute, p.totalEta);
 
     const primaryRouteLabel =
       p.linesUsed.length === 1 ? p.linesUsed[0] : `${p.linesUsed[0]} (+${p.linesUsed.length - 1} line(s))`;
@@ -419,18 +513,35 @@ export async function planCommute({ origin, destination, hour, time_type: timeTy
       crowd: finalCrowd,
       explanation: p.explanation,
       time_type: timeType,
+      preference,
+      requested_time: requestedTime,
       feasible_for_arrival: timeEval.feasible,
       suggested_departure_hour: timeEval.suggested_departure_hour,
+      suggested_departure_time: timeEval.suggested_departure_time,
       time_note: timeEval.note,
+      transfer_count: p.transferCount,
+      score: computeScore({
+        eta: Math.round(p.totalEta),
+        transferCount: p.transferCount,
+        crowd: finalCrowd,
+        preference,
+      }),
       legs: p.legs,
     });
   }
 
+  const ranked = results.sort((a, b) => {
+    const sa = Number(a.score);
+    const sb = Number(b.score);
+    if (!Number.isFinite(sa) && !Number.isFinite(sb)) return 0;
+    if (!Number.isFinite(sa)) return 1;
+    if (!Number.isFinite(sb)) return -1;
+    return sa - sb;
+  });
+
   if (timeType === 'arrive_by') {
-    return results
-      .filter((r) => r.feasible_for_arrival)
-      .sort((a, b) => a.eta - b.eta);
+    return ranked.filter((r) => r.feasible_for_arrival);
   }
 
-  return results.sort((a, b) => a.eta - b.eta);
+  return ranked;
 }

@@ -6,14 +6,51 @@ import axios from 'axios';
 import { getAllStops, planCommute } from '../services/plannerService.js';
 
 function parseHour(value) {
-  if (value === undefined || value === null || value === '') {
-    return { ok: false, error: 'hour is required' };
-  }
   const n = Number(value);
   if (!Number.isInteger(n) || n < 0 || n > 23) {
     return { ok: false, error: 'hour must be an integer between 0 and 23' };
   }
   return { ok: true, hour: n };
+}
+
+function parseTimeString(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return { ok: false, error: 'time must be in HH:MM format' };
+  }
+  const s = value.trim();
+  const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(s);
+  if (!m) return { ok: false, error: 'time must be in HH:MM format' };
+  const hour = Number(m[1]);
+  const minute = Number(m[2]);
+  return { ok: true, hour, minute, time: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}` };
+}
+
+function parseTimeContext(hourRaw, timeRaw) {
+  if (timeRaw !== undefined && timeRaw !== null && String(timeRaw).trim() !== '') {
+    const parsed = parseTimeString(timeRaw);
+    if (!parsed.ok) return parsed;
+    return { ok: true, hour: parsed.hour, minute: parsed.minute, time: parsed.time };
+  }
+  if (hourRaw === undefined || hourRaw === null || hourRaw === '') {
+    return { ok: false, error: 'Provide either `time` (HH:MM) or `hour` (0-23).' };
+  }
+  const hourParsed = parseHour(hourRaw);
+  if (!hourParsed.ok) return hourParsed;
+  return {
+    ok: true,
+    hour: hourParsed.hour,
+    minute: 0,
+    time: `${String(hourParsed.hour).padStart(2, '0')}:00`,
+  };
+}
+
+function parsePreference(value) {
+  const s = String(value ?? '')
+    .trim()
+    .toLowerCase();
+  if (s === 'less_crowded') return 'less_crowded';
+  if (s === 'fewer_transfers') return 'fewer_transfers';
+  return 'fastest';
 }
 
 export const getStops = async (req, res, next) => {
@@ -32,7 +69,14 @@ export const getStops = async (req, res, next) => {
 
 export const postCommute = async (req, res, next) => {
   try {
-    const { origin, destination, hour: hourRaw, time_type: timeTypeRaw } = req.body ?? {};
+    const {
+      origin,
+      destination,
+      hour: hourRaw,
+      time: timeRaw,
+      time_type: timeTypeRaw,
+      preference: preferenceRaw,
+    } = req.body ?? {};
 
     if (typeof origin !== 'string' || !origin.trim()) {
       return res.status(400).json({ message: 'origin is required (non-empty string)' });
@@ -43,9 +87,9 @@ export const postCommute = async (req, res, next) => {
         .json({ message: 'destination is required (non-empty string)' });
     }
 
-    const hourParsed = parseHour(hourRaw);
-    if (!hourParsed.ok) {
-      return res.status(400).json({ message: hourParsed.error });
+    const timeContext = parseTimeContext(hourRaw, timeRaw);
+    if (!timeContext.ok) {
+      return res.status(400).json({ message: timeContext.error });
     }
 
     const tt =
@@ -56,8 +100,11 @@ export const postCommute = async (req, res, next) => {
     const data = await planCommute({
       origin: origin.trim(),
       destination: destination.trim(),
-      hour: hourParsed.hour,
+      hour: timeContext.hour,
+      minute: timeContext.minute,
+      requested_time: timeContext.time,
       time_type: tt,
+      preference: parsePreference(preferenceRaw),
     });
 
     return res.json({ data });
