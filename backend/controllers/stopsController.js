@@ -1,14 +1,4 @@
-// Mock bus stops data
-const busStops = [
-  { id: 1, name: "Motijheel Central", lat: 23.7333, lng: 90.4167 },
-  { id: 2, name: "Shahbagh Square", lat: 23.7386, lng: 90.3958 },
-  { id: 3, name: "Dhanmondi Lake", lat: 23.7461, lng: 90.3742 },
-  { id: 4, name: "Gulshan Circle", lat: 23.7925, lng: 90.4078 },
-  { id: 5, name: "Uttara Sector 3", lat: 23.8759, lng: 90.3794 },
-  { id: 6, name: "Mirpur 10", lat: 23.8069, lng: 90.3686 },
-  { id: 7, name: "Banani DOHS", lat: 23.7937, lng: 90.4036 },
-  { id: 8, name: "Mohammadpur Bus Stand", lat: 23.7574, lng: 90.3594 },
-];
+import { getAllStopsData } from '../services/transitDataService.js';
 
 // Calculate distance between two points (Haversine formula approximation)
 function calculateDistance(lat1, lng1, lat2, lng2) {
@@ -22,36 +12,56 @@ function calculateDistance(lat1, lng1, lat2, lng2) {
 }
 
 export const getNearbyStops = (req, res) => {
-  const { lat, lng, radius = 5 } = req.query; // radius in km, default 5km
+  const { lat, lng, radius = 5 } = req.query;
   if (!lat || !lng) {
-    return res.status(400).json({ error: "Latitude and longitude required" });
+    return res.status(400).json({ error: 'Latitude and longitude required' });
   }
-
   const userLat = parseFloat(lat);
   const userLng = parseFloat(lng);
   const searchRadius = parseFloat(radius);
+  if (!Number.isFinite(userLat) || !Number.isFinite(userLng)) {
+    return res.status(400).json({ error: 'Latitude and longitude must be valid numbers' });
+  }
+  if (!Number.isFinite(searchRadius) || searchRadius <= 0 || searchRadius > 20) {
+    return res.status(400).json({ error: 'radius must be between 0 and 20 km' });
+  }
 
-  const nearbyStops = busStops
-    .map(stop => ({
-      ...stop,
-      distance: calculateDistance(userLat, userLng, stop.lat, stop.lng)
-    }))
-    .filter(stop => stop.distance <= searchRadius)
-    .sort((a, b) => a.distance - b.distance)
-    .slice(0, 10); // Limit to 10 closest
-
-  res.json({ stops: nearbyStops });
+  getAllStopsData()
+    .then((data) => {
+      const nearbyStops = data.stops
+        .map((stop) => ({
+          ...stop,
+          distance: calculateDistance(userLat, userLng, stop.lat, stop.lng),
+          routes: data.routesByStop.get(String(stop.name).trim().toLowerCase()) ?? [],
+        }))
+        .filter((stop) => stop.distance <= searchRadius)
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, 20);
+      res.json({ stops: nearbyStops });
+    })
+    .catch((error) => {
+      res.status(500).json({ error: error.message || 'Failed to load stops data' });
+    });
 };
 
 export const searchStops = (req, res) => {
   const { query } = req.query;
   if (!query) {
-    return res.status(400).json({ error: "Search query required" });
+    return res.status(400).json({ error: 'Search query required' });
   }
-
-  const results = busStops.filter(stop =>
-    stop.name.toLowerCase().includes(query.toLowerCase())
-  );
-
-  res.json({ stops: results });
+  getAllStopsData()
+    .then((data) => {
+      const q = String(query).toLowerCase().trim();
+      const results = data.stops
+        .filter((stop) => stop.name.toLowerCase().includes(q))
+        .map((stop) => ({
+          ...stop,
+          routes: data.routesByStop.get(String(stop.name).trim().toLowerCase()) ?? [],
+        }))
+        .slice(0, 25);
+      res.json({ stops: results });
+    })
+    .catch((error) => {
+      res.status(500).json({ error: error.message || 'Failed to search stops' });
+    });
 };

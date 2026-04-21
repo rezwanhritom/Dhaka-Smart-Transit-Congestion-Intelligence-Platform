@@ -1,62 +1,52 @@
-// Mock bus routes and data
-const busRoutes = [
-  { id: 1, name: "Motijheel to Uttara", stops: [1, 2, 3, 5] },
-  { id: 2, name: "Shahbagh to Gulshan", stops: [2, 3, 4, 7] },
-  { id: 3, name: "Dhanmondi to Mirpur", stops: [3, 6, 8] },
-];
+import fleetSimulationService from '../services/fleetSimulationService.js';
+import { getStopByIdOrName } from '../services/transitDataService.js';
 
-const buses = [
-  { id: 1, route_id: 1, current_lat: 23.7400, current_lng: 90.4000, status: "moving" },
-  { id: 2, route_id: 2, current_lat: 23.7500, current_lng: 90.3800, status: "moving" },
-  { id: 3, route_id: 3, current_lat: 23.7600, current_lng: 90.3600, status: "stopped" },
-];
-
-// Mock upcoming buses at stops
-function generateUpcomingBuses(stopId) {
-  const routesAtStop = busRoutes.filter(route => route.stops.includes(stopId));
-  const upcoming = [];
-
-  routesAtStop.forEach(route => {
-    // Simulate 1-3 upcoming buses per route
-    const numBuses = Math.floor(Math.random() * 3) + 1;
-    for (let i = 0; i < numBuses; i++) {
-      const eta = Math.floor(Math.random() * 20) + 1; // 1-20 minutes
-      upcoming.push({
-        bus_id: `${route.id}-${i + 1}`,
-        route_id: route.id,
-        route_name: route.name,
-        eta_minutes: eta,
-        arrival_time: new Date(Date.now() + eta * 60000).toISOString()
-      });
-    }
-  });
-
-  return upcoming.sort((a, b) => a.eta_minutes - b.eta_minutes);
-}
-
-export const getUpcomingBuses = (req, res) => {
+export const getUpcomingBuses = async (req, res) => {
   const { stop_id } = req.params;
   if (!stop_id) {
-    return res.status(400).json({ error: "Stop ID required" });
+    return res.status(400).json({ error: 'Stop ID required' });
   }
-
-  const stopId = parseInt(stop_id);
-  const upcomingBuses = generateUpcomingBuses(stopId);
-
-  res.json({ stop_id: stopId, upcoming_buses: upcomingBuses });
+  try {
+    const stop = await getStopByIdOrName(stop_id);
+    if (!stop) {
+      return res.status(404).json({ error: 'Stop not found' });
+    }
+    const n = Number(req.query?.limit ?? 10);
+    const limit = Number.isFinite(n) ? Math.max(1, Math.min(30, Math.floor(n))) : 10;
+    const upcomingBuses = await fleetSimulationService.getUpcomingForStop(stop.name, limit);
+    return res.json({ stop_id: stop.id, stop_name: stop.name, upcoming_buses: upcomingBuses });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Failed to load upcoming buses' });
+  }
 };
 
-export const getLiveBusLocations = (req, res) => {
-  // Return current locations of all buses
-  res.json({ buses });
+export const getLiveBusLocations = async (req, res) => {
+  try {
+    const routeFilter = String(req.query?.route_name ?? '').trim();
+    const snapshot = await fleetSimulationService.getFleetSnapshot();
+    const buses = Array.isArray(snapshot?.buses) ? snapshot.buses : [];
+    const filtered = routeFilter
+      ? buses.filter((b) => String(b.route_name).trim().toLowerCase() === routeFilter.toLowerCase())
+      : buses;
+    return res.json({
+      simulation_time_iso: snapshot?.simulation_time_iso ?? null,
+      simulation_time_scale: snapshot?.simulation_time_scale ?? 1,
+      buses: filtered,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Failed to load live buses' });
+  }
 };
 
-export const getBusLocation = (req, res) => {
+export const getBusLocation = async (req, res) => {
   const { bus_id } = req.params;
-  const bus = buses.find(b => b.id == bus_id);
-  if (!bus) {
-    return res.status(404).json({ error: "Bus not found" });
+  try {
+    const bus = await fleetSimulationService.getBus(String(bus_id));
+    if (!bus) {
+      return res.status(404).json({ error: 'Bus not found' });
+    }
+    return res.json({ bus });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Failed to load bus location' });
   }
-
-  res.json({ bus });
 };

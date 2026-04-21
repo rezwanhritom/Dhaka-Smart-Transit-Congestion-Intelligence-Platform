@@ -17,12 +17,12 @@ export const searchStops = (query) => {
 };
 
 // Buses API
-export const getUpcomingBuses = (stopId) => {
-  return api.get(`/stops/${stopId}/buses`);
+export const getUpcomingBuses = (stopId, limit = 10) => {
+  return api.get(`/stops/${stopId}/buses`, { params: { limit } });
 };
 
-export const getLiveBusLocations = () => {
-  return api.get('/buses/live');
+export const getLiveBusLocations = (params = {}) => {
+  return api.get('/buses/live', { params });
 };
 
 export const getBusLocation = (busId) => {

@@ -305,6 +305,30 @@ class FleetSimulationService {
     }
   }
 
+  async getUpcomingForStop(stopName, limit = 10) {
+    await this.advance(Date.now());
+    const out = [];
+    for (const b of this.buses) {
+      if (b.status !== 'in_service') continue;
+      if (!b.stops.includes(stopName)) continue;
+      const eta = this._etaToStopMinutes(b, stopName);
+      if (!Number.isFinite(eta)) continue;
+      out.push({
+        bus_id: b.bus_id,
+        route_name: b.route_name,
+        eta_minutes: eta,
+        loop_count_today: b.loop_count_today,
+        current_loop_index: b.current_loop_index,
+        current_from_stop: b.from_stop ?? null,
+        current_to_stop: b.to_stop ?? null,
+        lat: b.lat,
+        lon: b.lon,
+      });
+    }
+    out.sort((a, b) => a.eta_minutes - b.eta_minutes);
+    return out.slice(0, Math.max(1, Math.min(50, Number(limit) || 10)));
+  }
+
   async createTrackingSession({ origin, destination, route_name: routeName, boarding_stop: boardingStop }) {
     await this.advance(Date.now());
     const nearest = this.findNearestBus({ origin, destination, route_name: routeName, boarding_stop: boardingStop });
