@@ -15,12 +15,30 @@ const ROUTES_DATA_PATH = path.join(
   'data',
   'routes.json',
 );
+const STOPS_DATA_PATH = path.join(
+  __dirname,
+  '..',
+  '..',
+  'ai-services',
+  'data',
+  'stops.json',
+);
+const ROUTE_GEOMETRIES_PATH = path.join(
+  __dirname,
+  '..',
+  '..',
+  'ai-services',
+  'data',
+  'route_geometries.json',
+);
 
 const CROWD_RANK = { LOW: 0, MEDIUM: 1, HIGH: 2 };
 /** Extra minutes charged for alighting and boarding another line at the same stop. */
 const TRANSFER_PENALTY_MIN = 5;
 
 let routesCache = null;
+let stopsGeoCache = null;
+let routeGeometryCache = null;
 
 /**
  * @returns {Promise<Array<{ name: string, stops: string[] }>>}
@@ -40,6 +58,37 @@ export async function loadRoutesDataset() {
 /** For tests or hot-reload of dataset file. */
 export function clearRoutesCache() {
   routesCache = null;
+  stopsGeoCache = null;
+  routeGeometryCache = null;
+}
+
+async function loadStopsGeoMap() {
+  if (stopsGeoCache) return stopsGeoCache;
+  const raw = await fs.readFile(STOPS_DATA_PATH, 'utf8');
+  const rows = JSON.parse(raw);
+  if (!Array.isArray(rows)) throw new Error('stops.json must contain a JSON array');
+  const map = new Map();
+  for (const row of rows) {
+    const name = String(row?.name ?? '').trim();
+    const lat = Number(row?.lat);
+    const lon = Number(row?.lon);
+    if (!name || !Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    map.set(name, { lat, lon, zone: String(row?.zone ?? 'normal') });
+  }
+  stopsGeoCache = map;
+  return map;
+}
+
+async function loadRouteGeometryDataset() {
+  if (routeGeometryCache) return routeGeometryCache;
+  try {
+    const raw = await fs.readFile(ROUTE_GEOMETRIES_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    routeGeometryCache = parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    routeGeometryCache = {};
+  }
+  return routeGeometryCache;
 }
 
 /**
@@ -157,6 +206,58 @@ function normalizePreference(value) {
   if (s === 'less_crowded') return 'less_crowded';
   if (s === 'fewer_transfers') return 'fewer_transfers';
   return 'fastest';
+}
+
+function keyForRoute(routeName) {
+  return String(routeName ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function baseRouteKey(routeName) {
+  return keyForRoute(routeName).replace(/\s+\(return\)$/, '');
+}
+
+function normalizeLandmarks(rawLandmarks, stopGeoMap) {
+  if (!Array.isArray(rawLandmarks)) return [];
+  const out = [];
+  for (const lm of rawLandmarks) {
+    if (typeof lm === 'string') {
+      const stopGeo = stopGeoMap.get(lm.trim());
+      if (stopGeo) {
+        out.push({ name: lm.trim(), lat: stopGeo.lat, lon: stopGeo.lon });
+      }
+      continue;
+    }
+    const name = String(lm?.name ?? '').trim();
+    const lat = Number(lm?.lat);
+    const lon = Number(lm?.lon);
+    if (name && Number.isFinite(lat) && Number.isFinite(lon)) {
+      out.push({ name, lat, lon });
+    }
+  }
+  return out;
+}
+
+function collectPathFromRoute(routeName, fromStop, toStop, routes) {
+  const route = routes.find((r) => String(r?.name ?? '').trim() === routeName);
+  if (!route || !Array.isArray(route.stops)) return [];
+  const stops = route.stops.map((s) => String(s).trim());
+  const i = stops.indexOf(fromStop);
+  const j = stops.indexOf(toStop);
+  if (i === -1 || j === -1 || j < i) return [];
+  return stops.slice(i, j + 1);
+}
+
+function pointsForStops(stopNames, stopGeoMap) {
+  const out = [];
+  for (const s of stopNames) {
+    const geo = stopGeoMap.get(s);
+    if (!geo) continue;
+    out.push([geo.lat, geo.lon]);
+  }
+  return out;
 }
 
 function stateKey(stop, route) {
@@ -478,6 +579,8 @@ export async function planCommute({
     ? requestedTimeRaw.trim()
     : toTimeString(hour, minute);
   const routes = await loadRoutesDataset();
+  const stopGeoMap = await loadStopsGeoMap();
+  const routeGeomData = await loadRouteGeometryDataset();
   const trafficLevel = await resolveTrafficLevelForPlanning(hour);
   const segmentTraffic = await resolveSegmentTrafficLevels(routes, hour, trafficLevel);
 
@@ -505,6 +608,23 @@ export async function planCommute({
     const primaryRouteLabel =
       p.linesUsed.length === 1 ? p.linesUsed[0] : `${p.linesUsed[0]} (+${p.linesUsed.length - 1} line(s))`;
 
+    const mapSegments = rideLegs.map((leg) => {
+      const stopPath = collectPathFromRoute(leg.route, leg.from_stop, leg.to_stop, routes);
+      const polyline = pointsForStops(stopPath, stopGeoMap);
+      const routeGeom =
+        routeGeomData[keyForRoute(leg.route)] ??
+        routeGeomData[baseRouteKey(leg.route)] ??
+        {};
+      return {
+        route: leg.route,
+        from_stop: leg.from_stop,
+        to_stop: leg.to_stop,
+        crowd: leg.crowd,
+        polyline,
+        landmarks: normalizeLandmarks(routeGeom.landmarks, stopGeoMap),
+      };
+    });
+
     results.push({
       route: primaryRouteLabel,
       lines: p.linesUsed,
@@ -526,6 +646,7 @@ export async function planCommute({
         crowd: finalCrowd,
         preference,
       }),
+      map_segments: mapSegments,
       legs: p.legs,
     });
   }

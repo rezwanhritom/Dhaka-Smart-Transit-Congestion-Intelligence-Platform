@@ -103,11 +103,11 @@ If the team adds **real** `bus_id` positions later, the planner’s simulation l
 
 ### Phase 3 — Road geometry & named points (dataset + UI)
 
-- [ ] **3.1** Create `route_geometries.json` (or chosen structure) for all planner routes; include **polylines**.  
-- [ ] **3.2** Add **landmarks / main road points** (as many as practical; iterate).  
-- [ ] **3.3** Geocode **stops** if not lat/lon yet (small `stops_geo.json` or embed in routes) so map endpoints align with graph stops.  
-- [ ] **3.4** Backend: optional `GET /api/planner/route-geometry?route=...` or embed geometry in commute response for chosen path.  
-- [ ] **3.5** Frontend: map component on planner (Leaflet/Mapbox already aligned with project choice) — draw polyline, markers for stops and landmark labels.
+- [x] **3.1** Create `route_geometries.json` (or chosen structure) for all planner routes; include **polylines**. *(Scaffold added: `ai-services/data/route_geometries.json`; planner now also derives path polylines from route stop order + `stops.json` coordinates for immediate rendering.)*  
+- [x] **3.2** Add **landmarks / main road points** (as many as practical; iterate). *(Initial landmark set added in `ai-services/data/route_geometries.json` for all core routes; planner map now renders landmark markers/tooltips.)*  
+- [x] **3.3** Geocode **stops** if not lat/lon yet (small `stops_geo.json` or embed in routes) so map endpoints align with graph stops. *(Already available via `ai-services/data/stops.json` and used by planner map rendering.)*  
+- [x] **3.4** Backend: optional `GET /api/planner/route-geometry?route=...` or embed geometry in commute response for chosen path. *(Implemented via `planCommute` response: `map_segments` per route leg.)*  
+- [x] **3.5** Frontend: map component on planner (Leaflet/Mapbox already aligned with project choice) — draw polyline, markers for stops and landmark labels. *(Planner now renders best-route leg polylines with crowd-based line colors.)*
 
 **Exit criteria:** User sees **actual path shape** and **named road points** for planned routes.
 

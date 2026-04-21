@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip } from 'react-leaflet';
 import api from '../services/api';
 
 const inputClass =
@@ -33,6 +34,15 @@ const routeItemVariants = {
     transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] },
   },
 };
+
+const DHAKA_CENTER = [23.8103, 90.4125];
+
+function crowdLineColor(crowd) {
+  const key = String(crowd ?? '').toUpperCase();
+  if (key === 'HIGH') return '#ef4444';
+  if (key === 'MEDIUM') return '#eab308';
+  return '#22c55e';
+}
 
 function Planner() {
   const [stops, setStops] = useState([]);
@@ -85,6 +95,28 @@ function Planner() {
       return ea - eb;
     });
   }, [results]);
+
+  const bestRouteMapSegments = useMemo(() => {
+    if (!sortedRoutes.length) return [];
+    const segments = sortedRoutes[0]?.map_segments;
+    return Array.isArray(segments) ? segments.filter((s) => Array.isArray(s?.polyline) && s.polyline.length > 1) : [];
+  }, [sortedRoutes]);
+
+  const bestRouteLandmarks = useMemo(() => {
+    const dedupe = new Map();
+    for (const seg of bestRouteMapSegments) {
+      const landmarks = Array.isArray(seg?.landmarks) ? seg.landmarks : [];
+      for (const lm of landmarks) {
+        const name = String(lm?.name ?? '').trim();
+        const lat = Number(lm?.lat);
+        const lon = Number(lm?.lon);
+        if (!name || !Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+        const key = `${name}|${lat.toFixed(4)}|${lon.toFixed(4)}`;
+        if (!dedupe.has(key)) dedupe.set(key, { name, lat, lon });
+      }
+    }
+    return Array.from(dedupe.values());
+  }, [bestRouteMapSegments]);
 
   const handlePlanRoute = async () => {
     setError('');
@@ -277,6 +309,40 @@ function Planner() {
         </div>
 
         <div className="space-y-6">
+          {bestRouteMapSegments.length > 0 ? (
+            <div className="h-[280px] w-full overflow-hidden rounded-2xl border border-white/10 bg-slate-900/80">
+              <MapContainer center={DHAKA_CENTER} zoom={12} className="h-full w-full" scrollWheelZoom>
+                <TileLayer
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                />
+                {bestRouteMapSegments.map((seg, idx) => (
+                  <Polyline
+                    key={`${seg.route}-${seg.from_stop}-${seg.to_stop}-${idx}`}
+                    positions={seg.polyline}
+                    pathOptions={{ color: crowdLineColor(seg.crowd), weight: 5, opacity: 0.9 }}
+                  >
+                    <Tooltip sticky>
+                      {seg.route}: {seg.from_stop} → {seg.to_stop} ({crowdLabel(seg.crowd)})
+                    </Tooltip>
+                  </Polyline>
+                ))}
+                {bestRouteLandmarks.map((lm, idx) => (
+                  <CircleMarker
+                    key={`${lm.name}-${idx}`}
+                    center={[lm.lat, lm.lon]}
+                    radius={4}
+                    pathOptions={{ color: '#38bdf8', fillColor: '#22d3ee', fillOpacity: 0.9 }}
+                  >
+                    <Tooltip direction="top" offset={[0, -2]} opacity={0.95}>
+                      Landmark: {lm.name}
+                    </Tooltip>
+                  </CircleMarker>
+                ))}
+              </MapContainer>
+            </div>
+          ) : null}
+
           {loading ? (
             <div className="flex min-h-[280px] items-center justify-center rounded-2xl border border-white/10 bg-white/5 p-8 backdrop-blur-md">
               <motion.p
