@@ -16,6 +16,7 @@ The repo **does not commit** `.env` files (they are in `.gitignore`). You keep *
 | `AI_SERVICE_URL` | Base URL of FastAPI, e.g. `http://localhost:8000` (no trailing slash). |
 | `PORT` | Backend port (default `5000`). |
 | `ADMIN_KEY` | Optional. If unset, admin routes accept `x-admin-key: dev-secret-admin`. |
+| `FLEET_SIM_TIME_SCALE` | Optional planner simulation speed multiplier (default `1`). Example: `20` means simulation clock runs 20x faster. |
 
 **Frontend** only sees variables named `VITE_*`. Set `VITE_API_URL` to either `/api` (proxy) or `http://localhost:5000/api`.
 
@@ -115,6 +116,12 @@ Checks:
 | Incidents | `/incident` | Backend + AI + incident PKL |
 | Congestion map | `/congestion` | Backend + AI + congestion PKL + `stops.json` coords |
 | Dashboard | `/dashboard` | Backend + AI for forecast |
+
+Planner simulation APIs (Phase 4):
+
+- `GET /api/planner/sim/fleet` — multi-bus fleet snapshot, loop counts, shift windows, live positions
+- `GET /api/planner/sim/buses/:bus_id` — one bus state
+- `GET /api/planner/sim/history?limit=200` — recent completed loop history (JSONL-backed)
 
 ---
 

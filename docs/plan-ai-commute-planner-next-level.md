@@ -117,16 +117,16 @@ If the team adds **real** `bus_id` positions later, the planner’s simulation l
 
 This phase implements the **full cycle / loop system**: many buses per route type, staggered starts, independent **live** positions, loop counting, shift end → reset, and **historical records** per loop for future model training.
 
-- [ ] **4.1** Define identifiers: `route_key` / `pattern_id`, `bus_id` (unique across fleet), `operator` optional.  
-- [ ] **4.2** **Fleet generation:** For each active route pattern, instantiate **≥ 21** buses (implement **random N** in `[min_fleet, max_fleet]` with **min_fleet ≥ 21**, e.g. 21–40). Store fleet list in memory + optional seed file for reproducible demos.  
-- [ ] **4.3** **Staggered departures:** First trip of bus *i* at `t0 + i * headway` (default **10 min** headway; configurable). Handle wrap past midnight if needed (policy: cap within service window).  
-- [ ] **4.4** **Global service window:** Default **05:00–24:00** — no new departures outside window unless you add night service; document edge cases (buses already on road past midnight).  
-- [ ] **4.5** **Per-bus duty shifts:** Randomize each bus’s `(shift_start, shift_end)` within the global window (e.g. 06:00–23:00). When simulation time **exceeds `shift_end`**, mark bus **off-duty**, optionally **complete** current loop then park, **reset** for next cycle (next simulated day or rolling 24h — pick one and document).  
-- [ ] **4.6** **Loop semantics:** Increment **loop count** when a bus completes one full traversal of its **assigned polyline pattern** (terminal → terminal); align with bidirectional data from Phase 1.  
-- [ ] **4.7** **Per-bus GPS state:** Each bus has **independent** position along polyline, speed/jitter, current segment index — expose via internal service or `GET /api/planner/fleet/...` (exact routes TBD).  
-- [ ] **4.8** **Loop history persistence:** On loop completion, append `{ bus_id, route_key, loop_index, started_at, ended_at, duration_sec, ... }` to **durable storage** (SQLite recommended for queries + CSV export). Retention policy: keep all for dev; cap size in production if needed.  
-- [ ] **4.9** **Export hook:** Script or endpoint to dump recent history for **training pipelines** (join with congestion hour, weather later).  
-- [ ] **4.10** **Simulation clock:** Virtual clock or wall-clock with speed multiplier for demos; document in runbook.
+- [x] **4.1** Define identifiers: `route_key` / `pattern_id`, `bus_id` (unique across fleet), `operator` optional. *(Implemented in `fleetSimulationService` with deterministic `bus_id` per route pattern.)*  
+- [x] **4.2** **Fleet generation:** For each active route pattern, instantiate **≥ 21** buses (implement **random N** in `[min_fleet, max_fleet]` with **min_fleet ≥ 21**, e.g. 21–40). Store fleet list in memory + optional seed file for reproducible demos. *(Implemented: 21–30 buses per pattern with deterministic seeded RNG.)*  
+- [x] **4.3** **Staggered departures:** First trip of bus *i* at `t0 + i * headway` (default **10 min** headway; configurable). Handle wrap past midnight if needed (policy: cap within service window). *(Implemented with 10-minute headway.)*  
+- [x] **4.4** **Global service window:** Default **05:00–24:00** — no new departures outside window unless you add night service; document edge cases (buses already on road past midnight). *(Implemented.)*  
+- [x] **4.5** **Per-bus duty shifts:** Randomize each bus’s `(shift_start, shift_end)` within the global window (e.g. 06:00–23:00). When simulation time **exceeds `shift_end`**, mark bus **off-duty**, optionally **complete** current loop then park, **reset** for next cycle (next simulated day or rolling 24h — pick one and document). *(Implemented with per-bus randomized shifts and daily reset.)*  
+- [x] **4.6** **Loop semantics:** Increment **loop count** when a bus completes one full traversal of its **assigned polyline pattern** (terminal → terminal); align with bidirectional data from Phase 1. *(Implemented with per-loop duration and loop index accounting.)*  
+- [x] **4.7** **Per-bus GPS state:** Each bus has **independent** position along polyline, speed/jitter, current segment index — expose via internal service or `GET /api/planner/fleet/...` (exact routes TBD). *(Implemented via stop-to-stop interpolation and API endpoints below.)*  
+- [x] **4.8** **Loop history persistence:** On loop completion, append `{ bus_id, route_key, loop_index, started_at, ended_at, duration_sec, ... }` to **durable storage** (SQLite recommended for queries + CSV export). Retention policy: keep all for dev; cap size in production if needed. *(Implemented in JSONL: `ai-services/data/history/fleet_loop_history.jsonl`.)*  
+- [x] **4.9** **Export hook:** Script or endpoint to dump recent history for **training pipelines** (join with congestion hour, weather later). *(Implemented endpoint: `GET /api/planner/sim/history?limit=`.)*  
+- [x] **4.10** **Simulation clock:** Virtual clock or wall-clock with speed multiplier for demos; document in runbook. *(Implemented with `FLEET_SIM_TIME_SCALE`.)*
 
 **Exit criteria:** Running backend shows **many buses** per route with **different** positions; loops increment; shifts end and reset; **history file/DB** grows with one row per completed loop; data is suitable for **future** ETA/loop-duration experiments.
 

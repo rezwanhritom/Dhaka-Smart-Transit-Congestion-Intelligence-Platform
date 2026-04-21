@@ -4,6 +4,7 @@
 
 import axios from 'axios';
 import { getAllStops, planCommute } from '../services/plannerService.js';
+import fleetSimulationService from '../services/fleetSimulationService.js';
 
 function parseHour(value) {
   const n = Number(value);
@@ -128,6 +129,38 @@ export const postCommute = async (req, res, next) => {
     if (error.statusCode === 503) {
       return res.status(503).json({ message: error.message });
     }
+    next(error);
+  }
+};
+
+export const getSimulationFleet = async (req, res, next) => {
+  try {
+    const data = await fleetSimulationService.getFleetSnapshot();
+    return res.json({ data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getSimulationBus = async (req, res, next) => {
+  try {
+    const { bus_id: busId } = req.params;
+    if (!busId) return res.status(400).json({ message: 'bus_id is required' });
+    const bus = await fleetSimulationService.getBus(busId);
+    if (!bus) return res.status(404).json({ message: 'Bus not found' });
+    return res.json({ data: bus });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getSimulationHistory = async (req, res, next) => {
+  try {
+    const n = Number(req.query?.limit ?? 100);
+    const limit = Number.isFinite(n) ? Math.max(1, Math.min(2000, Math.floor(n))) : 100;
+    const data = await fleetSimulationService.getLoopHistory(limit);
+    return res.json({ data, limit });
+  } catch (error) {
     next(error);
   }
 };
