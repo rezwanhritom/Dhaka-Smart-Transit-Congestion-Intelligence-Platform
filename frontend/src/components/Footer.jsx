@@ -1,8 +1,8 @@
 function Footer() {
   return (
-    <footer className="border-t border-white/10 bg-slate-950/70 px-4 py-6 backdrop-blur sm:px-6 lg:px-8">
-      <div className="mx-auto w-full max-w-7xl text-center text-sm text-slate-300">
-        Dhaka Smart Transit Congestion Intelligence Platform
+    <footer className="w-full max-w-full overflow-x-hidden border-t border-white/10 bg-darkbg/90 backdrop-blur-md">
+      <div className="mx-auto max-w-7xl px-6 py-8 text-center text-sm text-slate-400 md:px-12">
+        © 2026 Dhaka Smart Transit
       </div>
     </footer>
   );

@@ -1,5 +1,5 @@
 PORT=5000
-MONGO_URI=mongodb+srv://rezwanhritom:M6rMNSsnmYAkZfTK@cluster0.nw6zeuq.mongodb.net/?appName=Cluster0
+MONGO_URI=mongodb+srv://rezwanhritom:MEOamwO0CyeoBlUt@cluster0.nw6zeuq.mongodb.net/?appName=Cluster0
 AI_SERVICE_URL=http://localhost:8000
 
 
