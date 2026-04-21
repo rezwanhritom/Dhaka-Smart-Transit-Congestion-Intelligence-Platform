@@ -58,6 +58,8 @@ function Planner() {
   const [simLoading, setSimLoading] = useState(false);
   const [simError, setSimError] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
+  const [nearestBus, setNearestBus] = useState(null);
+  const [nearestError, setNearestError] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [hasFetched, setHasFetched] = useState(false);
@@ -100,12 +102,27 @@ function Planner() {
     });
   }, [results]);
 
+  const bestRouteContext = useMemo(() => {
+    if (!sortedRoutes.length) return null;
+    const best = sortedRoutes[0];
+    const rideLeg = Array.isArray(best?.legs) ? best.legs.find((l) => l.kind === 'ride') : null;
+    if (!rideLeg) return null;
+    return {
+      route_name: rideLeg.route,
+      origin: best?.stops?.[0] ?? rideLeg.from_stop,
+      destination: best?.stops?.[best.stops.length - 1] ?? rideLeg.to_stop,
+      boarding_stop: rideLeg.from_stop,
+    };
+  }, [sortedRoutes]);
+
   const handlePlanRoute = async () => {
     setError('');
     setResults([]);
     setSimSession(null);
     setSimError('');
     setSaveMessage('');
+    setNearestBus(null);
+    setNearestError('');
 
     if (!origin?.trim() || !destination?.trim()) {
       setError('Please select both origin and destination.');
@@ -222,6 +239,32 @@ function Planner() {
     }, 3000);
     return () => clearInterval(id);
   }, [simSession?.session_id]);
+
+  useEffect(() => {
+    if (!bestRouteContext) return undefined;
+    let cancelled = false;
+    const loadNearest = async () => {
+      try {
+        const { data } = await api.get('/planner/sim/nearest', { params: bestRouteContext });
+        if (!cancelled) {
+          setNearestBus(data?.data ?? null);
+          setNearestError('');
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setNearestBus(null);
+          const msg = err.response?.data?.message || err.message || 'Nearest bus unavailable';
+          setNearestError(String(msg));
+        }
+      }
+    };
+    loadNearest();
+    const id = setInterval(loadNearest, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [bestRouteContext]);
 
   return (
     <div className="w-full max-w-full overflow-x-hidden px-6 py-24 md:px-12 md:py-32">
@@ -399,6 +442,20 @@ function Planner() {
           {!loading && sortedRoutes.length > 0 ? (
             <>
               <div className="rounded-2xl border border-cyan-500/20 bg-cyan-950/20 p-4 text-sm text-cyan-100">
+                {nearestBus ? (
+                  <div className="mb-3 rounded-lg border border-cyan-300/20 bg-cyan-900/30 px-3 py-2 text-xs">
+                    <p className="font-semibold text-cyan-100">Nearest bus to your origin</p>
+                    <p className="mt-1">
+                      {nearestBus.bus_id} · {cleanRouteName(nearestBus.route_name)} · ETA {nearestBus.eta_to_user_min} min
+                    </p>
+                    <p className="mt-1 text-cyan-200/80">
+                      Now: {nearestBus?.bus_position?.from_stop ?? '—'} → {nearestBus?.bus_position?.to_stop ?? '—'} · Loops: {nearestBus.loop_count_today}
+                    </p>
+                  </div>
+                ) : null}
+                {!nearestBus && nearestError ? (
+                  <p className="mb-3 text-xs text-amber-200">{nearestError}</p>
+                ) : null}
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p>Simulation tracking for the best option (ETA to you, then ETA to destination).</p>
                   <div className="flex flex-wrap items-center gap-2">

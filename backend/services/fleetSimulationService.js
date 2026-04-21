@@ -307,6 +307,25 @@ class FleetSimulationService {
 
   async createTrackingSession({ origin, destination, route_name: routeName, boarding_stop: boardingStop }) {
     await this.advance(Date.now());
+    const nearest = this.findNearestBus({ origin, destination, route_name: routeName, boarding_stop: boardingStop });
+    if (!nearest) return null;
+    const targetBoarding = boardingStop || origin;
+    const chosen = nearest;
+    const sessionId = `sim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    this.sessions.set(sessionId, {
+      session_id: sessionId,
+      bus_id: chosen.bus_id,
+      route_name: chosen.route_name,
+      origin,
+      destination,
+      boarding_stop: targetBoarding,
+      onboard_confirmed: false,
+      created_at: new Date().toISOString(),
+    });
+    return { session_id: sessionId, bus_id: chosen.bus_id, eta_to_user_min: chosen.eta_to_user_min };
+  }
+
+  findNearestBus({ origin, destination, route_name: routeName, boarding_stop: boardingStop }) {
     const candidates = this.buses.filter(
       (b) =>
         b.status === 'in_service' &&
@@ -322,19 +341,26 @@ class FleetSimulationService {
       .filter((x) => Number.isFinite(x.eta_to_user_min))
       .sort((a, b) => a.eta_to_user_min - b.eta_to_user_min);
     if (!ranked.length) return null;
-    const chosen = ranked[0];
-    const sessionId = `sim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    this.sessions.set(sessionId, {
-      session_id: sessionId,
-      bus_id: chosen.bus.bus_id,
-      route_name: chosen.bus.route_name,
-      origin,
-      destination,
-      boarding_stop: targetBoarding,
-      onboard_confirmed: false,
-      created_at: new Date().toISOString(),
-    });
-    return { session_id: sessionId, bus_id: chosen.bus.bus_id, eta_to_user_min: chosen.eta_to_user_min };
+    const chosen = ranked[0].bus;
+    return {
+      bus_id: chosen.bus_id,
+      route_name: chosen.route_name,
+      eta_to_user_min: ranked[0].eta_to_user_min,
+      bus_status: chosen.status,
+      loop_count_today: chosen.loop_count_today,
+      current_loop_index: chosen.current_loop_index,
+      bus_position: {
+        lat: chosen.lat,
+        lon: chosen.lon,
+        from_stop: chosen.from_stop ?? null,
+        to_stop: chosen.to_stop ?? null,
+      },
+    };
+  }
+
+  async getNearestBus(params) {
+    await this.advance(Date.now());
+    return this.findNearestBus(params);
   }
 
   async getTrackingSession(sessionId) {

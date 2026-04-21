@@ -167,6 +167,28 @@ export const getSimulationHistory = async (req, res, next) => {
   }
 };
 
+export const getSimulationNearestBus = async (req, res, next) => {
+  try {
+    const origin = String(req.query?.origin ?? '').trim();
+    const destination = String(req.query?.destination ?? '').trim();
+    const routeName = String(req.query?.route_name ?? '').trim();
+    const boardingStop = String(req.query?.boarding_stop ?? '').trim();
+    if (!origin || !destination || !routeName) {
+      return res.status(400).json({ message: 'origin, destination, and route_name are required' });
+    }
+    const data = await fleetSimulationService.getNearestBus({
+      origin,
+      destination,
+      route_name: routeName,
+      boarding_stop: boardingStop || undefined,
+    });
+    if (!data) return res.status(404).json({ message: 'No active bus found for this route segment' });
+    return res.json({ data });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const postSimulationSession = async (req, res, next) => {
   try {
     const { origin, destination, route_name: routeName, boarding_stop: boardingStop } = req.body ?? {};

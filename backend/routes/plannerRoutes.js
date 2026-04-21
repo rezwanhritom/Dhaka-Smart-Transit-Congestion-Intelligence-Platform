@@ -3,6 +3,7 @@ import {
   getSimulationBus,
   getSimulationFleet,
   getSimulationHistory,
+  getSimulationNearestBus,
   getSimulationSession,
   getFavoriteCommutes,
   getStops,
@@ -21,6 +22,7 @@ router.post('/favorites', postFavoriteCommute);
 router.get('/sim/fleet', getSimulationFleet);
 router.get('/sim/buses/:bus_id', getSimulationBus);
 router.get('/sim/history', getSimulationHistory);
+router.get('/sim/nearest', getSimulationNearestBus);
 router.post('/sim/session', postSimulationSession);
 router.get('/sim/session/:session_id', getSimulationSession);
 router.post('/sim/session/:session_id/onboard', postSimulationSessionOnboard);
