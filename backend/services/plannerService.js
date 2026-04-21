@@ -221,6 +221,47 @@ function baseRouteKey(routeName) {
   return keyForRoute(routeName).replace(/\s+\(return\)$/, '');
 }
 
+function routeKeysForMatching(routeName) {
+  const k = keyForRoute(routeName);
+  return [k, baseRouteKey(routeName)];
+}
+
+function buildImpactProfile(activeImpacts = []) {
+  if (!Array.isArray(activeImpacts) || activeImpacts.length === 0) {
+    return { routePenaltyMap: new Map(), version: null };
+  }
+  const routePenaltyMap = new Map();
+  for (const item of activeImpacts) {
+    const sev = String(item?.severity ?? '')
+      .trim()
+      .toUpperCase();
+    if (sev !== 'HIGH') continue;
+    const delay = Number(item?.delay ?? item?.delay_minutes ?? 0);
+    if (!Number.isFinite(delay) || delay <= 0) continue;
+    const routes = Array.isArray(item?.affected_routes) ? item.affected_routes : [];
+    for (const r of routes) {
+      const raw = String(r ?? '').trim();
+      if (!raw) continue;
+      for (const key of routeKeysForMatching(raw)) {
+        const prev = routePenaltyMap.get(key) ?? 0;
+        routePenaltyMap.set(key, Math.max(prev, delay));
+      }
+    }
+  }
+  const version = routePenaltyMap.size ? `imp-${Date.now()}-${routePenaltyMap.size}` : null;
+  return { routePenaltyMap, version };
+}
+
+function impactedDelayForRoute(routeName, impactProfile) {
+  if (!impactProfile?.routePenaltyMap) return 0;
+  let best = 0;
+  for (const key of routeKeysForMatching(routeName)) {
+    const v = impactProfile.routePenaltyMap.get(key) ?? 0;
+    if (v > best) best = v;
+  }
+  return best;
+}
+
 function normalizeLandmarks(rawLandmarks, stopGeoMap) {
   if (!Array.isArray(rawLandmarks)) return [];
   const out = [];
@@ -329,7 +370,14 @@ function routesServingStop(routes, stop) {
  * @param {string} trafficLevel
  * @returns {Promise<Array<{ totalEta: number, legs: Array<{ from_stop: string, to_stop: string, route: string, eta: number, crowd: string, kind: 'ride'|'transfer' }>, explanation: string }>>}
  */
-export async function findPathsWithTransfers(origin, destination, hour, trafficLevel, segmentTraffic = new Map()) {
+export async function findPathsWithTransfers(
+  origin,
+  destination,
+  hour,
+  trafficLevel,
+  segmentTraffic = new Map(),
+  impactProfile = null,
+) {
   const routes = await loadRoutesDataset();
   const stopGeoMap = await loadStopsGeoMap();
   const walkAdjacency = buildWalkAdjacency(stopGeoMap);
@@ -409,11 +457,17 @@ export async function findPathsWithTransfers(origin, destination, hour, trafficL
       throw new Error('AI ETA response missing numeric `eta`');
     }
     const crowd = normalizeCrowdLevel(crowdRes?.level);
+    const impactedDelay = impactedDelayForRoute(routeName, impactProfile);
+    const impactMultiplier = impactedDelay > 0 ? Math.min(1.6, 1 + impactedDelay / 120) : 1;
+    const adjustedEta = Number((eta * impactMultiplier).toFixed(2));
+    const impactDelta = Number((adjustedEta - eta).toFixed(2));
     const leg = {
       from_stop: fromStop,
       to_stop: toStop,
       route: routeName,
-      eta,
+      eta: adjustedEta,
+      eta_base: eta,
+      impact_delta: impactDelta,
       crowd,
       kind: 'ride',
     };
@@ -635,6 +689,7 @@ export async function planCommute({
   requested_time: requestedTimeRaw,
   time_type: timeTypeRaw = 'leave_after',
   preference: preferenceRaw = 'fastest',
+  active_incidents: activeIncidentsRaw = [],
 }) {
   const timeType = timeTypeRaw === 'arrive_by' ? 'arrive_by' : 'leave_after';
   const preference = normalizePreference(preferenceRaw);
@@ -646,6 +701,7 @@ export async function planCommute({
   const routeGeomData = await loadRouteGeometryDataset();
   const trafficLevel = await resolveTrafficLevelForPlanning(hour);
   const segmentTraffic = await resolveSegmentTrafficLevels(routes, hour, trafficLevel);
+  const impactProfile = buildImpactProfile(activeIncidentsRaw);
 
   const paths = await findPathsWithTransfers(
     origin.trim(),
@@ -653,6 +709,7 @@ export async function planCommute({
     hour,
     trafficLevel,
     segmentTraffic,
+    impactProfile,
   );
 
   const results = [];
@@ -666,7 +723,12 @@ export async function planCommute({
       }
     }
     const finalCrowd = rideLegs.reduce((worst, l) => worseCrowd(worst, l.crowd), 'LOW');
-    const timeEval = evaluateTimeType(timeType, hour, minute, p.totalEta);
+    const etaBase = Number(
+      p.legs.reduce((n, l) => n + Number(l?.eta_base ?? l?.eta ?? 0), 0).toFixed(2),
+    );
+    const etaAdjusted = Number(p.totalEta.toFixed(2));
+    const impactDelta = Number((etaAdjusted - etaBase).toFixed(2));
+    const timeEval = evaluateTimeType(timeType, hour, minute, etaAdjusted);
 
     const primaryRouteLabel =
       p.linesUsed.length === 1 ? p.linesUsed[0] : `${p.linesUsed[0]} (+${p.linesUsed.length - 1} line(s))`;
@@ -692,7 +754,11 @@ export async function planCommute({
       route: primaryRouteLabel,
       lines: p.linesUsed,
       stops: [...new Set(stopsChain)],
-      eta: Math.round(p.totalEta),
+      eta: Math.round(etaAdjusted),
+      eta_base: Math.round(etaBase),
+      eta_adjusted: Math.round(etaAdjusted),
+      impact_delta: Math.round(impactDelta),
+      impact_profile_version: impactProfile.version,
       crowd: finalCrowd,
       explanation: p.explanation,
       time_type: timeType,

@@ -279,6 +279,124 @@ export function pickReroutes(allRouteNames, affectedSet, max = 2) {
   return reroutes;
 }
 
+function norm(v) {
+  return String(v ?? '')
+    .trim()
+    .toLowerCase();
+}
+
+export function rankAffectedRoutes(geoContext, max = 6) {
+  const affected = Array.isArray(geoContext?.affected_routes) ? geoContext.affected_routes : [];
+  const nearestRoute = norm(geoContext?.nearest_route_segment?.route_name);
+  const nearestStop = norm(geoContext?.nearest_stop?.stop_name);
+  const networkStatus = norm(geoContext?.network_status);
+  const out = [];
+  for (const route of affected) {
+    const name = String(route ?? '').trim();
+    if (!name) continue;
+    const rn = norm(name);
+    let score = 0.45;
+    const reasons = [];
+    if (nearestRoute && rn === nearestRoute) {
+      score += 0.4;
+      reasons.push('nearest_route_segment_match');
+    }
+    if (nearestStop) {
+      score += 0.1;
+      reasons.push('nearest_stop_context');
+    }
+    if (networkStatus === 'on_network') {
+      score += 0.08;
+      reasons.push('on_network');
+    } else if (networkStatus === 'near_network') {
+      score += 0.03;
+      reasons.push('near_network');
+    }
+    out.push({
+      route_name: name,
+      impact_score: Number(Math.min(1, score).toFixed(3)),
+      reasons,
+    });
+  }
+  out.sort((a, b) => b.impact_score - a.impact_score);
+  return out.slice(0, Math.max(1, max));
+}
+
+function spreadFactorForHour(hour) {
+  const h = Number(hour);
+  if (!Number.isInteger(h) || h < 0 || h > 23) return 1;
+  if ((h >= 7 && h <= 10) || (h >= 17 && h <= 20)) return 1.15;
+  if (h >= 11 && h <= 16) return 1.05;
+  return 0.95;
+}
+
+function incidentTypeMultiplier(category) {
+  const c = norm(category).replace(/\s+/g, '_');
+  if (c === 'road_blockage') return 1.2;
+  if (c === 'accident') return 1.15;
+  if (c === 'breakdown') return 1.05;
+  if (c === 'overcrowding') return 1.0;
+  if (c === 'reckless_driving') return 0.95;
+  return 0.9;
+}
+
+export function rankAffectedRoutesAdvanced(geoContext, options = {}, max = 6) {
+  const base = rankAffectedRoutes(geoContext, max);
+  const spread = spreadFactorForHour(options?.hour);
+  const typeMult = incidentTypeMultiplier(options?.category);
+  return base
+    .map((row) => ({
+      ...row,
+      impact_score: Number(Math.min(1, row.impact_score * spread * typeMult).toFixed(3)),
+      reasons: [...row.reasons, `time_spread_x${spread}`, `incident_type_x${typeMult}`],
+    }))
+    .sort((a, b) => b.impact_score - a.impact_score)
+    .slice(0, Math.max(1, max));
+}
+
+export function suggestReroutesScored(allRouteNames, affectedRouteScores, max = 3) {
+  const affectedSet = new Set(
+    (affectedRouteScores ?? []).map((r) => String(r?.route_name ?? '').trim()).filter(Boolean),
+  );
+  const avgImpact =
+    affectedRouteScores && affectedRouteScores.length
+      ? affectedRouteScores.reduce((n, r) => n + Number(r?.impact_score || 0), 0) /
+        affectedRouteScores.length
+      : 0.5;
+  const reroutes = [];
+  for (const route of allRouteNames) {
+    const name = String(route ?? '').trim();
+    if (!name || affectedSet.has(name)) continue;
+    const score = Number(Math.max(0.15, 1 - avgImpact).toFixed(3));
+    reroutes.push({
+      route_name: name,
+      suitability_score: score,
+      reason: 'outside_current_affected_set',
+    });
+    if (reroutes.length >= max) break;
+  }
+  return reroutes;
+}
+
+export function suggestReroutesDeterministic(allRouteNames, affectedRouteScores, max = 3) {
+  const affectedSet = new Set(
+    (affectedRouteScores ?? []).map((r) => String(r?.route_name ?? '').trim()).filter(Boolean),
+  );
+  const out = [];
+  for (const nameRaw of allRouteNames) {
+    const route_name = String(nameRaw ?? '').trim();
+    if (!route_name || affectedSet.has(route_name)) continue;
+    const base = 0.7 - out.length * 0.08;
+    out.push({
+      route_name,
+      suitability_score: Number(Math.max(0.2, base).toFixed(3)),
+      reason: 'deterministic_fallback_ai_unavailable',
+    });
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 export async function deriveIncidentGeoContext(payload = {}) {
   const point = parseGeoPoint(payload);
   const locationText =

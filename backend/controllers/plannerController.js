@@ -79,6 +79,7 @@ export const postCommute = async (req, res, next) => {
       time: timeRaw,
       time_type: timeTypeRaw,
       preference: preferenceRaw,
+      active_incidents: activeIncidentsRaw,
     } = req.body ?? {};
 
     if (typeof origin !== 'string' || !origin.trim()) {
@@ -108,6 +109,7 @@ export const postCommute = async (req, res, next) => {
       requested_time: timeContext.time,
       time_type: tt,
       preference: parsePreference(preferenceRaw),
+      active_incidents: Array.isArray(activeIncidentsRaw) ? activeIncidentsRaw : [],
     });
 
     return res.json({ data });

@@ -3,8 +3,11 @@ import { classifyIncident as classifyIncidentWithAi, getImpact } from '../servic
 import {
   deriveIncidentGeoContext,
   loadRoutesDataset,
-  pickReroutes,
+  rankAffectedRoutesAdvanced,
+  suggestReroutesDeterministic,
+  suggestReroutesScored,
 } from '../services/incidentImpactService.js';
+import { emitImpactAlertEvent } from '../services/impactAlertService.js';
 
 /**
  * Route incidents using category, severity, and optional affected route names.
@@ -248,13 +251,51 @@ export const estimateImpact = async (req, res, next) => {
 
     const trimmedLoc = geo.location;
     const routes = await loadRoutesDataset();
-    const affected_routes = geo.affected_routes;
+    const affected_route_scores = rankAffectedRoutesAdvanced(
+      geo,
+      { hour: hourRaw, category },
+      8,
+    );
+    const affected_routes = affected_route_scores.map((r) => r.route_name);
+    if (affected_routes.length === 0) {
+      return res.status(422).json({
+        message:
+          'Unable to infer impacted routes from provided context. Provide clearer location or coordinates near transit corridors.',
+        error_code: 'impact_context_insufficient',
+        network_status: geo.network_status,
+        nearest_stop: geo.nearest_stop,
+        nearest_route_segment: geo.nearest_route_segment,
+      });
+    }
     const allNames = routes
       .map((r) => r?.name)
       .filter((n) => typeof n === 'string' && n.trim())
       .map((n) => n.trim());
-    const affectedSet = new Set(affected_routes);
-    const reroutes = pickReroutes(allNames, affectedSet, 2);
+    const reroutes = suggestReroutesScored(allNames, affected_route_scores, 3);
+
+    const sev = String(severity).trim().toUpperCase();
+    const allowMedium = String(process.env.IMPACT_ALLOW_MEDIUM ?? '')
+      .trim()
+      .toLowerCase() === 'true';
+    const policy_applied =
+      sev === 'HIGH'
+        ? 'high_severity_auto'
+        : allowMedium && sev === 'MEDIUM'
+          ? 'medium_opt_in'
+          : 'not_triggered';
+    if (policy_applied === 'not_triggered') {
+      return res.status(202).json({
+        message:
+          'Impact estimation policy is currently configured for HIGH severity incidents only.',
+        policy_applied,
+        trigger_reason: 'severity_below_policy_threshold',
+        severity: sev,
+        network_status: geo.network_status,
+        area: geo.area,
+        affected_routes,
+        affected_route_scores,
+      });
+    }
 
     let hour = null;
     if (hourRaw !== undefined && hourRaw !== null && hourRaw !== '') {
@@ -270,18 +311,73 @@ export const estimateImpact = async (req, res, next) => {
       hour,
     };
 
-    const { delay, recovery_time } = await getImpact(aiPayload);
+    let delay;
+    let recovery_time;
+    let impact_source = 'ai_model';
+    let reroute_source = 'scored';
+    try {
+      const aiImpact = await getImpact(aiPayload);
+      delay = aiImpact?.delay;
+      recovery_time = aiImpact?.recovery_time;
+    } catch (impactErr) {
+      if (axios.isAxiosError(impactErr)) {
+        const sevUpper = String(severity).toUpperCase();
+        const base = sevUpper === 'HIGH' ? 40 : sevUpper === 'MEDIUM' ? 20 : 8;
+        const spreadBoost = Math.max(0, affected_routes.length - 1) * 3;
+        delay = base + spreadBoost;
+        recovery_time = Math.round(delay * 2.2);
+        impact_source = 'deterministic_fallback';
+        reroute_source = 'deterministic_fallback';
+      } else {
+        throw impactErr;
+      }
+    }
+    if (reroute_source === 'deterministic_fallback') {
+      // replace scored reroutes with deterministic ordering when AI impact is unavailable
+      const fallbackReroutes = suggestReroutesDeterministic(allNames, affected_route_scores, 3);
+      reroutes.length = 0;
+      reroutes.push(...fallbackReroutes);
+    }
+    const shouldAlert = sev === 'HIGH';
+    const alert_event = shouldAlert
+      ? await emitImpactAlertEvent({
+          severity: sev,
+          category,
+          area: geo.area,
+          zone: geo.zone,
+          delay,
+          recovery_time,
+          affected_routes,
+          reroutes,
+          nearest_stop: geo.nearest_stop,
+          nearest_route_segment: geo.nearest_route_segment,
+          policy_applied,
+        })
+      : {
+          emitted: false,
+          deduped: false,
+          reason: 'severity_below_alert_threshold',
+        };
 
     return res.json({
+      policy_applied,
+      trigger_reason:
+        policy_applied === 'high_severity_auto'
+          ? 'high_severity_incident'
+          : 'medium_severity_opt_in',
       affected_routes,
+      affected_route_scores,
       delay,
       recovery_time,
+      impact_source,
+      reroute_source,
       reroutes,
       network_status: geo.network_status,
       zone: geo.zone,
       area: geo.area,
       nearest_stop: geo.nearest_stop,
       nearest_route_segment: geo.nearest_route_segment,
+      alert_event,
     });
   } catch (error) {
     if (error.code === 'ENOENT') {
